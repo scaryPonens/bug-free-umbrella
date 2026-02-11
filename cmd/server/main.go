@@ -14,6 +14,7 @@ import (
 	"bug-free-umbrella/pkg/tracing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -28,6 +29,8 @@ import (
 // @host      localhost:8080
 // @BasePath  /
 func main() {
+	godotenv.Load()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

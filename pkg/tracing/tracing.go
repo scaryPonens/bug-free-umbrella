@@ -14,6 +14,12 @@ import (
 )
 
 func InitTracer(ctx context.Context) (*sdktrace.TracerProvider, trace.Tracer, error) {
+	if os.Getenv("TRACING_ENABLED") == "false" {
+		tp := sdktrace.NewTracerProvider()
+		otel.SetTracerProvider(tp)
+		return tp, tp.Tracer("bug-free-umbrella"), nil
+	}
+
 	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if otelEndpoint == "" {
 		otelEndpoint = "localhost:4317"
