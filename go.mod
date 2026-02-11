@@ -44,7 +44,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.7 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.8.0 // indirect
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -75,6 +75,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/telebot.v3 v3.3.8 // indirect
+	gopkg.in/telebot.v3 v3.3.8
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
