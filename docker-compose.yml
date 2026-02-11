@@ -6,8 +6,33 @@ services:
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
       - GIN_MODE=release
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/postgres?sslmode=disable
+      - REDIS_URL=redis:6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     depends_on:
       - otel-collector
+      - db
+      - redis
+    networks:
+      - tracing
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - tracing
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
     networks:
       - tracing
 

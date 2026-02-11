@@ -9,6 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"bug-free-umbrella/internal/bot"
+	"bug-free-umbrella/internal/cache"
+	"bug-free-umbrella/internal/config"
+	"bug-free-umbrella/internal/db"
 	"bug-free-umbrella/internal/handler"
 	"bug-free-umbrella/internal/service"
 	"bug-free-umbrella/pkg/tracing"
@@ -31,8 +35,20 @@ import (
 func main() {
 	godotenv.Load()
 
+	cfg := config.Load()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Init Postgres and Redis with config
+	os.Setenv("DATABASE_URL", cfg.DatabaseURL)
+	os.Setenv("REDIS_URL", cfg.RedisURL)
+	db.InitPostgres(ctx)
+	cache.InitRedis(ctx)
+
+	// Start Telegram bot (responds to /ping)
+	os.Setenv("TELEGRAM_BOT_TOKEN", cfg.TelegramBotToken)
+	bot.StartTelegramBot()
 
 	tp, tracer, err := tracing.InitTracer(ctx)
 	if err != nil {
