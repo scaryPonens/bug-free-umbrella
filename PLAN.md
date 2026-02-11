@@ -4,19 +4,27 @@
 
 ---
 
-## Phase 0: Foundation & Skeleton
+
+## Phase 0: Foundation & Skeleton ✅ **(Completed)**
 
 **Goal:** Deployable Go service on Railway that does *one thing* end-to-end.
 
 - Go module scaffolded with clean project layout (`cmd/`, `internal/`, `pkg/`)
-- Telegram bot basics via [telebot](https://github.com/tucnak/telebot) or [gotgbot](https://github.com/PaulSonOfLars/gotgbot) — responds to `/ping`
-- Supabase/NeonDB connection (pick one as primary postgres store for now)
-- Redis on Railway for caching/rate limiting
-- Config management (env vars, Railway secrets)
-- CI: GitHub Actions → deploy to Railway
+- Telegram bot basics via [telebot](https://github.com/tucnak/telebot) — responds to `/ping`
+- Postgres (local via Docker, Railway-ready) as primary store
+- Redis (local via Docker, Railway-ready) for caching/rate limiting
+- Config management (env vars, Railway secrets, .env file supported)
+- CI: GitHub Actions → deploy to Railway (**pending**)
 - Basic domain types: `Asset`, `Signal`, `Recommendation`, `RiskLevel(1-5)`
 
-**Deliverable:** Bot replies to you on Telegram. Deployed. Database connected.
+**Deliverable:**
+- Bot replies to you on Telegram (`/ping` → `pong`)
+- App runs locally with Docker Compose (includes Postgres, Redis, OTel, Jaeger)
+- Database and Redis connections established
+- Configurable via `.env` file
+
+**Status:**
+Phase 0 is complete. The project is scaffolded, all core services are wired, and local development is fully supported. CI/CD to Railway is the only remaining step for full automation.
 
 ---
 
