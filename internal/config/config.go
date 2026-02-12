@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -11,6 +12,14 @@ type Config struct {
 	DatabaseURL       string
 	RedisURL          string
 	CoinGeckoPollSecs int
+
+	MCPTransport          string
+	MCPHTTPEnabled        bool
+	MCPHTTPBind           string
+	MCPHTTPPort           int
+	MCPAuthToken          string
+	MCPRequestTimeoutSecs int
+	MCPRateLimitPerMin    int
 }
 
 func Load() *Config {
@@ -18,6 +27,7 @@ func Load() *Config {
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		RedisURL:         os.Getenv("REDIS_URL"),
+		MCPAuthToken:     os.Getenv("MCP_AUTH_TOKEN"),
 	}
 
 	if cfg.TelegramBotToken == "" {
@@ -35,6 +45,43 @@ func Load() *Config {
 	if v := os.Getenv("COINGECKO_POLL_SECS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.CoinGeckoPollSecs = n
+		}
+	}
+
+	cfg.MCPTransport = strings.ToLower(strings.TrimSpace(os.Getenv("MCP_TRANSPORT")))
+	if cfg.MCPTransport == "" {
+		cfg.MCPTransport = "stdio"
+	}
+	if cfg.MCPTransport != "stdio" && cfg.MCPTransport != "http" {
+		log.Printf("Warning: unsupported MCP_TRANSPORT=%q, defaulting to stdio", cfg.MCPTransport)
+		cfg.MCPTransport = "stdio"
+	}
+
+	cfg.MCPHTTPEnabled = strings.EqualFold(strings.TrimSpace(os.Getenv("MCP_HTTP_ENABLED")), "true")
+
+	cfg.MCPHTTPBind = strings.TrimSpace(os.Getenv("MCP_HTTP_BIND"))
+	if cfg.MCPHTTPBind == "" {
+		cfg.MCPHTTPBind = "127.0.0.1"
+	}
+
+	cfg.MCPHTTPPort = 8090
+	if v := strings.TrimSpace(os.Getenv("MCP_HTTP_PORT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MCPHTTPPort = n
+		}
+	}
+
+	cfg.MCPRequestTimeoutSecs = 5
+	if v := strings.TrimSpace(os.Getenv("MCP_REQUEST_TIMEOUT_SECS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MCPRequestTimeoutSecs = n
+		}
+	}
+
+	cfg.MCPRateLimitPerMin = 60
+	if v := strings.TrimSpace(os.Getenv("MCP_RATE_LIMIT_PER_MIN")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MCPRateLimitPerMin = n
 		}
 	}
 

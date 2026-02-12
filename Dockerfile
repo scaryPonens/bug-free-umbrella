@@ -11,6 +11,7 @@ COPY . .
 
 RUN swag init -g cmd/server/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o mcp ./cmd/mcp
 RUN CGO_ENABLED=0 GOOS=linux go build -o migrate ./cmd/migrate
 
 FROM alpine:latest
@@ -20,6 +21,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 COPY --from=builder /app/main .
+COPY --from=builder /app/mcp .
 COPY --from=builder /app/migrate .
 
 EXPOSE 8080

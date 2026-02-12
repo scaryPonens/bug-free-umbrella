@@ -4,7 +4,7 @@
 ![Coverage](https://img.shields.io/badge/Coverage-77%25-brightgreen.svg)
 
 
-Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV candles, and serves data via HTTP and Telegram.
+Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV candles, and serves data via HTTP, Telegram, and MCP.
 
 - [Gin](https://github.com/gin-gonic/gin) web API with Swagger docs
 - CoinGecko integration — live prices for 10 assets (BTC, ETH, SOL, XRP, ADA, DOGE, DOT, AVAX, LINK, MATIC)
@@ -12,6 +12,7 @@ Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV can
 - Redis cache-aside for latest prices
 - Background polling with rate-limited CoinGecko API calls
 - Telegram bot (`/ping`, `/price`, `/volume`, `/signals`, `/alerts`)
+- MCP service (`stdio` + streamable HTTP transport) with tools/resources for prices, candles, and signals
 - OpenTelemetry tracing with Jaeger
 - Configurable via `.env` file
 
@@ -26,6 +27,7 @@ Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV can
 
 ```
 cmd/server/            Entrypoint and dependency wiring
+cmd/mcp/               MCP server binary (stdio + HTTP)
 cmd/migrate/           Versioned Postgres schema migrations runner
 internal/bot/          Telegram bot commands
 internal/cache/        Redis client initialization
@@ -38,6 +40,7 @@ internal/provider/     External API clients (CoinGecko) and rate limiter
 internal/repository/   Postgres persistence (candle repository, migrations)
 internal/signal/       Pure technical-analysis signal engine (RSI/MACD/Bollinger/Volume)
 internal/service/      Business logic (price service, signal service, work service)
+internal/mcp/          MCP tools/resources, transport auth, and middleware
 pkg/tracing/           OpenTelemetry initialization
 docs/                  Generated Swagger spec (do not edit manually)
 ```
@@ -82,6 +85,15 @@ REDIS_URL=redis:6379
 
 # CoinGecko polling interval in seconds (default 60)
 COINGECKO_POLL_SECS=60
+
+# MCP
+MCP_TRANSPORT=stdio
+MCP_HTTP_ENABLED=false
+MCP_HTTP_BIND=127.0.0.1
+MCP_HTTP_PORT=8090
+MCP_AUTH_TOKEN=change-me
+MCP_REQUEST_TIMEOUT_SECS=5
+MCP_RATE_LIMIT_PER_MIN=60
 ```
 
 > **Note:** The default Docker Compose setup will run Postgres and Redis containers for you. The app will auto-connect using the above variables.
@@ -144,6 +156,71 @@ Signal generation runs in a separate poller:
 | 2    | Long-interval signals (4h/1d)       | Every 30min|
 
 Polling interval is configurable via `COINGECKO_POLL_SECS` (default 60).
+
+## MCP Service
+
+Run MCP over stdio (local agent tools):
+
+```sh
+MCP_TRANSPORT=stdio go run ./cmd/mcp
+```
+
+Run MCP over HTTP (token required):
+
+```sh
+MCP_TRANSPORT=http \
+MCP_HTTP_ENABLED=true \
+MCP_HTTP_BIND=127.0.0.1 \
+MCP_HTTP_PORT=8090 \
+MCP_AUTH_TOKEN=change-me \
+go run ./cmd/mcp
+```
+
+MCP tools:
+- `prices_list_latest`
+- `prices_get_by_symbol`
+- `candles_list`
+- `signals_list`
+- `signals_generate` (generate + persist)
+
+MCP resources:
+- `market://supported-symbols`
+- `market://supported-intervals`
+- `prices://latest`
+- `prices://symbol/{symbol}`
+- `candles://{symbol}/{interval}?limit={n}`
+- `signals://latest?symbol={s}&risk={r}&indicator={i}&limit={n}`
+
+### Claude Desktop (stdio) local testing
+
+1. Ensure Postgres + Redis are running and migrations are applied.
+2. Add an MCP server entry to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+   (merge this under `mcpServers`; do not remove your existing `preferences` block)
+
+```json
+{
+  "mcpServers": {
+    "bug-free-umbrella": {
+      "command": "/bin/zsh",
+      "args": [
+        "-lc",
+        "cd /Users/reuben/Workspace/bug-free-umbrella && go run ./cmd/mcp"
+      ],
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+3. Restart Claude Desktop.
+
+Sample validation prompts:
+- `Give me a current market snapshot and rank the top 3 symbols by 24h volume.`
+- `How is BTC doing right now? Include price, 24h change, and volume.`
+- `Show the latest 20 candles for BTC on the 1h interval and summarize the trend.`
+- `Generate fresh BTC signals for 1h and 4h, then summarize what was generated.`
 
 ## Database Migrations
 

@@ -80,21 +80,39 @@ Phase 2 is complete. The repository now includes:
 
 ---
 
-## Phase 3: MCP Service Layer (Data + Tools First)
+## Phase 3: MCP Service Layer (Data + Tools First) ✅ **(Completed)**
 
 **Goal:** Expose bot capabilities through an MCP service before building the advisor UI/LLM layer.
 
-- Stand up an MCP server in Go that exposes:
-  - Price reads (`latest prices`, `price by symbol`)
-  - Candle reads (`candles by symbol/interval/limit`)
-  - Signal reads (`signals with symbol/risk/indicator filters`)
-  - Optional signal trigger tool (`generate signals for symbol/interval`) for controlled workflows
-- Treat existing HTTP/service layer as source of truth; MCP is an integration contract, not duplicated logic
-- Add auth and access controls appropriate for external tool clients
-- Add operational guardrails: request limits, structured errors, tracing spans around tool calls
-- Keep signal generation deterministic; MCP only exposes and orchestrates existing capabilities
+- Stand up a dedicated Go MCP binary at `cmd/mcp` using existing business services as source of truth (`PriceService`, `SignalService`)
+- Expose both transports (env-selected, one per process):
+  - `stdio` for local trusted clients
+  - streamable HTTP for remote clients
+- Add MCP tools:
+  - `prices_list_latest`
+  - `prices_get_by_symbol`
+  - `candles_list`
+  - `signals_list`
+  - `signals_generate` (generate + persist)
+- Add MCP resources:
+  - `market://supported-symbols`
+  - `market://supported-intervals`
+  - `prices://latest`
+  - `prices://symbol/{symbol}`
+  - `candles://{symbol}/{interval}?limit={n}`
+  - `signals://latest?symbol={s}&risk={r}&indicator={i}&limit={n}`
+- Enforce HTTP bearer-token auth from day one (`MCP_AUTH_TOKEN`)
+- Add operational guardrails:
+  - request timeout middleware
+  - max HTTP body size
+  - in-process rate limiting
+  - tracing spans around MCP tool/resource calls
+- Use MCP client-compatible tool naming (`[a-zA-Z0-9_-]` only, no dot-separated names)
 
 **Deliverable:** Any MCP-compatible client can query prices/candles/signals and invoke supported tools without using Telegram or direct DB access.
+
+**Status:**
+Phase 3 is complete. MCP package + binary, transports, auth/guardrails, tests, and docs are implemented and integrated without changing existing API/Telegram behavior.
 
 ---
 
@@ -172,6 +190,29 @@ Phase 2 is complete. The repository now includes:
 - Alert system: proactive Telegram/SSH notifications when high-confidence signals fire
 - Rate limiting, error budgets, observability (structured logging, OpenTelemetry)
 - Multi-user support if you want to share it
+
+**Smoke testing strategy (add as a deploy gate in this phase):**
+- Add `scripts/smoke/server_http_smoke.sh` for core API checks:
+  - `GET /health` returns `200`
+  - `GET /api/prices` returns non-empty symbols
+  - `GET /api/signals?limit=1` returns valid JSON
+- Add `scripts/smoke/mcp_http_smoke.sh` for MCP JSON-RPC over HTTP:
+  - unauthorized request without bearer token must fail (`401`/`403`)
+  - authorized `tools/list` succeeds
+  - authorized `tools/call` for `prices_list_latest` succeeds
+  - authorized `tools/call` for `signals_generate` succeeds and returns `generated_count`
+  - authorized `resources/read` for `market://supported-symbols` succeeds
+- Add `scripts/smoke/mcp_stdio_smoke.sh` for local/CI stdio transport:
+  - starts `go run ./cmd/mcp` with `MCP_TRANSPORT=stdio`
+  - sends minimal JSON-RPC initialize + tool call payload
+  - verifies expected response shape (tool result present, no protocol error)
+- Add a single entrypoint script `scripts/smoke/run_all.sh`:
+  - fails fast on first failed check
+  - prints a concise pass/fail summary per subsystem (API, MCP HTTP, MCP stdio)
+- Wire smoke scripts into release flow:
+  - run locally before Railway deploy
+  - run in CI on `main` after `go test ./...`
+  - run as first post-deploy verification against Railway service URLs
 
 **Status update (early work pulled forward):**
 - Telegram-side proactive alerts are already partially implemented in Phase 2 (`/alerts on|off|status`), with dedupe logic to avoid repeated notifications for identical generated signals.
