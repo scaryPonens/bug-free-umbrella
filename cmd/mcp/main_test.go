@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"bug-free-umbrella/internal/chart"
 	"bug-free-umbrella/internal/config"
 	"bug-free-umbrella/internal/domain"
+	"bug-free-umbrella/internal/job"
 	mcpserver "bug-free-umbrella/internal/mcp"
 	"bug-free-umbrella/internal/repository"
 	"bug-free-umbrella/internal/service"
@@ -103,9 +105,13 @@ func stubMCPDeps(t *testing.T, transport string) func() {
 	origInitRedis := initRedisFunc
 	origInitTracer := initTracerFunc
 	origNewSignalRepo := newSignalRepoFunc
+	origNewSignalImageRepo := newSignalImageRepoFunc
 	origNewProvider := newCoinGeckoProviderFunc
 	origNewSignalEngine := newSignalEngineFunc
 	origNewSignalService := newSignalServiceFunc
+	origNewChartRenderer := newChartRendererFunc
+	origNewSignalImageJob := newSignalImageJobFunc
+	origStartSignalImageJob := startSignalImageJobFunc
 	origNewMCPServer := newMCPServerFunc
 	origNewMCPHandler := newMCPHandlerFunc
 
@@ -133,6 +139,9 @@ func stubMCPDeps(t *testing.T, transport string) func() {
 	newSignalRepoFunc = func(repository.PgxPool, trace.Tracer) *repository.SignalRepository {
 		return nil
 	}
+	newSignalImageRepoFunc = func(repository.PgxPool, trace.Tracer) *repository.SignalImageRepository {
+		return nil
+	}
 	newCoinGeckoProviderFunc = func(trace.Tracer) service.PriceProvider { return stubMCPPriceProvider{} }
 	newSignalEngineFunc = func(func() time.Time) *signalengine.Engine { return signalengine.NewEngine(nil) }
 	newSignalServiceFunc = func(
@@ -140,9 +149,14 @@ func stubMCPDeps(t *testing.T, transport string) func() {
 		service.SignalCandleRepository,
 		service.SignalRepository,
 		service.SignalEngine,
+		service.SignalImageRepository,
+		service.SignalChartRenderer,
 	) *service.SignalService {
 		return nil
 	}
+	newChartRendererFunc = func() *chart.Renderer { return nil }
+	newSignalImageJobFunc = func(trace.Tracer, job.SignalImageMaintainer) *job.SignalImageMaintenance { return nil }
+	startSignalImageJobFunc = func(*job.SignalImageMaintenance, context.Context) {}
 	newMCPServerFunc = func(trace.Tracer, mcpserver.PriceReader, mcpserver.SignalReaderWriter, mcpserver.ServerConfig) *sdkmcp.Server {
 		return sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test-mcp"}, nil)
 	}
@@ -157,9 +171,13 @@ func stubMCPDeps(t *testing.T, transport string) func() {
 		initRedisFunc = origInitRedis
 		initTracerFunc = origInitTracer
 		newSignalRepoFunc = origNewSignalRepo
+		newSignalImageRepoFunc = origNewSignalImageRepo
 		newCoinGeckoProviderFunc = origNewProvider
 		newSignalEngineFunc = origNewSignalEngine
 		newSignalServiceFunc = origNewSignalService
+		newChartRendererFunc = origNewChartRenderer
+		newSignalImageJobFunc = origNewSignalImageJob
+		startSignalImageJobFunc = origStartSignalImageJob
 		newMCPServerFunc = origNewMCPServer
 		newMCPHandlerFunc = origNewMCPHandler
 	}

@@ -72,11 +72,11 @@ func testServer() (*sdkmcp.Server, *stubPriceService, *stubSignalService) {
 	}
 	signals := &stubSignalService{
 		listed: []domain.Signal{{
-			Symbol: "BTC", Interval: "1h", Indicator: domain.IndicatorRSI,
+			ID: 1, Symbol: "BTC", Interval: "1h", Indicator: domain.IndicatorRSI,
 			Direction: domain.DirectionLong, Risk: domain.RiskLevel2, Timestamp: time.Unix(0, 0).UTC(),
 		}},
 		generated: []domain.Signal{{
-			Symbol: "BTC", Interval: "1h", Indicator: domain.IndicatorMACD,
+			ID: 2, Symbol: "BTC", Interval: "1h", Indicator: domain.IndicatorMACD,
 			Direction: domain.DirectionLong, Risk: domain.RiskLevel4, Timestamp: time.Unix(1, 0).UTC(),
 		}},
 	}

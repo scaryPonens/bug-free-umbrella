@@ -36,21 +36,22 @@ func TestSignalInsertSignalsBatchesStatements(t *testing.T) {
 			Timestamp: time.Unix(3600, 0).UTC(),
 		},
 	}
-	if err := repo.InsertSignals(context.Background(), signals); err != nil {
+	if _, err := repo.InsertSignals(context.Background(), signals); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if pool.queuedBatch == nil || pool.queuedBatch.Len() != len(signals) {
 		t.Fatalf("expected batch of size %d", len(signals))
 	}
-	if batchResults.execCalls != len(signals) {
-		t.Fatalf("expected %d Exec calls, got %d", len(signals), batchResults.execCalls)
+	if batchResults.queryRowCalls != len(signals) {
+		t.Fatalf("expected %d QueryRow calls, got %d", len(signals), batchResults.queryRowCalls)
 	}
 }
 
 func TestSignalListSignalsReturnsRows(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	rows := [][]any{{
-		"BTC", "1h", domain.IndicatorRSI, string(domain.DirectionLong), int16(domain.RiskLevel2), now, "rsi crossed below 30",
+		int64(10), "BTC", "1h", domain.IndicatorRSI, string(domain.DirectionLong), int16(domain.RiskLevel2), now, "rsi crossed below 30",
+		int64(0), "", int32(0), int32(0), time.Unix(0, 0).UTC(),
 	}}
 	pool := &signalStubPool{rowsData: rows}
 	repo := NewSignalRepository(pool, trace.NewNoopTracerProvider().Tracer("test"))
@@ -66,6 +67,9 @@ func TestSignalListSignalsReturnsRows(t *testing.T) {
 	}
 	if len(signals) != 1 {
 		t.Fatalf("expected 1 signal, got %d", len(signals))
+	}
+	if signals[0].ID != 10 {
+		t.Fatalf("expected signal id=10, got %d", signals[0].ID)
 	}
 	if signals[0].Symbol != "BTC" || signals[0].Direction != domain.DirectionLong || signals[0].Risk != domain.RiskLevel2 {
 		t.Fatalf("unexpected signal payload: %+v", signals[0])
@@ -103,18 +107,24 @@ func (s *signalStubPool) Query(ctx context.Context, sql string, args ...any) (pg
 	return &signalStubRows{data: dataCopy}, nil
 }
 
+func (s *signalStubPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return &signalStubRow{id: 99}
+}
+
 type signalStubBatchResults struct {
-	execCalls int
+	queryRowCalls int
 }
 
 func (s *signalStubBatchResults) Exec() (pgconn.CommandTag, error) {
-	s.execCalls++
 	return pgconn.CommandTag{}, nil
 }
 
 func (s *signalStubBatchResults) Query() (pgx.Rows, error) { return &signalStubRows{}, nil }
 
-func (s *signalStubBatchResults) QueryRow() pgx.Row { return &signalStubRow{} }
+func (s *signalStubBatchResults) QueryRow() pgx.Row {
+	s.queryRowCalls++
+	return &signalStubRow{id: int64(s.queryRowCalls)}
+}
 
 func (s *signalStubBatchResults) Close() error { return nil }
 
@@ -146,10 +156,23 @@ func (r *signalStubRows) Scan(dest ...any) error {
 	row := r.data[r.idx-1]
 	for i, d := range dest {
 		switch ptr := d.(type) {
+		case *int64:
+			*ptr = row[i].(int64)
 		case *string:
 			*ptr = row[i].(string)
 		case *int16:
 			*ptr = row[i].(int16)
+		case *int:
+			switch v := row[i].(type) {
+			case int:
+				*ptr = v
+			case int32:
+				*ptr = int(v)
+			case int64:
+				*ptr = int(v)
+			default:
+				return fmt.Errorf("unsupported int source type %T", row[i])
+			}
 		case *time.Time:
 			*ptr = row[i].(time.Time)
 		default:
@@ -165,6 +188,16 @@ func (r *signalStubRows) RawValues() [][]byte { return nil }
 
 func (r *signalStubRows) Conn() *pgx.Conn { return nil }
 
-type signalStubRow struct{}
+type signalStubRow struct {
+	id int64
+}
 
-func (signalStubRow) Scan(dest ...any) error { return nil }
+func (r signalStubRow) Scan(dest ...any) error {
+	if len(dest) == 1 {
+		if idPtr, ok := dest[0].(*int64); ok {
+			*idPtr = r.id
+			return nil
+		}
+	}
+	return nil
+}

@@ -66,3 +66,21 @@ func TestResourcesStaticAndTemplated(t *testing.T) {
 		t.Fatalf("expected filter limit 10, got %d", signals.lastFilter.Limit)
 	}
 }
+
+func TestRemovedSignalImageResource(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	srv, _, _ := testServer()
+	session, shutdown, err := connectInMemory(ctx, srv)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	defer shutdown()
+	defer session.Close()
+
+	_, err = session.ReadResource(ctx, &sdkmcp.ReadResourceParams{URI: "signal-image://2"})
+	if err == nil {
+		t.Fatal("expected resource not found error for signal-image://2")
+	}
+}

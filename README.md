@@ -13,6 +13,7 @@ Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV can
 - Background polling with rate-limited CoinGecko API calls
 - Telegram bot (`/ping`, `/price`, `/volume`, `/signals`, `/alerts`)
 - MCP service (`stdio` + streamable HTTP transport) with tools/resources for prices, candles, and signals
+- Signal chart imaging (candlestick + triggering indicator) stored in Postgres and served to Telegram/API/MCP
 - OpenTelemetry tracing with Jaeger
 - Configurable via `.env` file
 
@@ -31,11 +32,12 @@ cmd/mcp/               MCP server binary (stdio + HTTP)
 cmd/migrate/           Versioned Postgres schema migrations runner
 internal/bot/          Telegram bot commands
 internal/cache/        Redis client initialization
+internal/chart/        Go-native signal chart image rendering
 internal/config/       Environment variable loading
 internal/db/           Postgres connection pool
 internal/domain/       Domain types (Candle, PriceSnapshot, Asset, Signal)
 internal/handler/      HTTP handlers with Swagger annotations
-internal/job/          Background polling jobs (price poller)
+internal/job/          Background jobs (price/signal pollers + signal-image maintenance)
 internal/provider/     External API clients (CoinGecko) and rate limiter
 internal/repository/   Postgres persistence (candle repository, migrations)
 internal/signal/       Pure technical-analysis signal engine (RSI/MACD/Bollinger/Volume)
@@ -118,6 +120,7 @@ MCP_RATE_LIMIT_PER_MIN=60
 | GET    | /api/prices/:symbol   | Current price for a specific asset (e.g. BTC)  |
 | GET    | /api/candles/:symbol  | OHLCV candles (`?interval=1h&limit=100`)       |
 | GET    | /api/signals          | Technical signals (`?symbol=BTC&risk=3&limit=50`) |
+| GET    | /api/signals/:id/image | Signal chart image (`image/png`)                  |
 
 Supported candle intervals: `5m`, `15m`, `1h`, `4h`, `1d`. Default limit is 100 (max 500).
 
@@ -130,8 +133,8 @@ Set `TELEGRAM_BOT_TOKEN` in your `.env` file to enable the bot.
 | /ping           | Health check — replies `pong`            |
 | /price BTC      | Current price, 24h change, 24h volume    |
 | /volume SOL     | 24h trading volume, price, 24h change    |
-| /signals BTC    | Latest generated signals for an asset     |
-| /signals --risk 3 | Latest signals filtered by risk level   |
+| /signals BTC    | Latest generated signals + chart images for an asset     |
+| /signals --risk 3 | Latest signals + chart images filtered by risk level   |
 | /alerts on      | Enable proactive signal push alerts       |
 | /alerts off     | Disable proactive signal push alerts      |
 | /alerts status  | Check whether proactive alerts are enabled |
@@ -156,6 +159,11 @@ Signal generation runs in a separate poller:
 | 2    | Long-interval signals (4h/1d)       | Every 30min|
 
 Polling interval is configurable via `COINGECKO_POLL_SECS` (default 60).
+
+Signal image maintenance runs alongside polling:
+- Retry failed signal renders every 5 minutes (bounded retries)
+- Delete expired signal images every hour
+- Image retention window: 24 hours
 
 ## MCP Service
 

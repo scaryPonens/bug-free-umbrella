@@ -21,9 +21,9 @@ func NewSignalRepository(pool PgxPool, tracer trace.Tracer) *SignalRepository {
 	return &SignalRepository{pool: pool, tracer: tracer}
 }
 
-func (r *SignalRepository) InsertSignals(ctx context.Context, signals []domain.Signal) error {
+func (r *SignalRepository) InsertSignals(ctx context.Context, signals []domain.Signal) ([]domain.Signal, error) {
 	if len(signals) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	_, span := r.tracer.Start(ctx, "signal-repo.insert-signals")
@@ -34,7 +34,10 @@ func (r *SignalRepository) InsertSignals(ctx context.Context, signals []domain.S
 		batch.Queue(
 			`INSERT INTO signals (symbol, interval, indicator, direction, risk, timestamp, details)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT (symbol, interval, indicator, timestamp, direction) DO NOTHING`,
+			 ON CONFLICT (symbol, interval, indicator, timestamp, direction) DO UPDATE SET
+			     risk = EXCLUDED.risk,
+			     details = EXCLUDED.details
+			 RETURNING id`,
 			s.Symbol,
 			s.Interval,
 			s.Indicator,
@@ -48,13 +51,17 @@ func (r *SignalRepository) InsertSignals(ctx context.Context, signals []domain.S
 	br := r.pool.SendBatch(ctx, batch)
 	defer br.Close()
 
-	for range signals {
-		if _, err := br.Exec(); err != nil {
-			return err
+	out := make([]domain.Signal, len(signals))
+	copy(out, signals)
+	for i := range signals {
+		var id int64
+		if err := br.QueryRow().Scan(&id); err != nil {
+			return nil, err
 		}
+		out[i].ID = id
 	}
 
-	return nil
+	return out, nil
 }
 
 func (r *SignalRepository) ListSignals(ctx context.Context, filter domain.SignalFilter) ([]domain.Signal, error) {
@@ -63,21 +70,27 @@ func (r *SignalRepository) ListSignals(ctx context.Context, filter domain.Signal
 
 	args := make([]any, 0, 4)
 	var sb strings.Builder
-	sb.WriteString(`SELECT symbol, interval, indicator, direction, risk, timestamp, details
-		FROM signals
+	sb.WriteString(`SELECT s.id, s.symbol, s.interval, s.indicator, s.direction, s.risk, s.timestamp, s.details,
+               COALESCE(si.id, 0), COALESCE(si.mime_type, ''), COALESCE(si.width, 0), COALESCE(si.height, 0),
+               COALESCE(si.expires_at, to_timestamp(0))
+		FROM signals s
+		LEFT JOIN signal_images si
+		  ON si.signal_id = s.id
+		 AND si.render_status = 'ready'
+		 AND si.expires_at > NOW()
 		WHERE 1=1`)
 
 	if filter.Symbol != "" {
 		args = append(args, strings.ToUpper(filter.Symbol))
-		sb.WriteString(fmt.Sprintf(" AND symbol = $%d", len(args)))
+		sb.WriteString(fmt.Sprintf(" AND s.symbol = $%d", len(args)))
 	}
 	if filter.Risk != nil {
 		args = append(args, int16(*filter.Risk))
-		sb.WriteString(fmt.Sprintf(" AND risk = $%d", len(args)))
+		sb.WriteString(fmt.Sprintf(" AND s.risk = $%d", len(args)))
 	}
 	if filter.Indicator != "" {
 		args = append(args, strings.ToLower(filter.Indicator))
-		sb.WriteString(fmt.Sprintf(" AND indicator = $%d", len(args)))
+		sb.WriteString(fmt.Sprintf(" AND s.indicator = $%d", len(args)))
 	}
 
 	limit := filter.Limit
@@ -88,7 +101,7 @@ func (r *SignalRepository) ListSignals(ctx context.Context, filter domain.Signal
 		limit = 200
 	}
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" ORDER BY timestamp DESC LIMIT $%d", len(args)))
+	sb.WriteString(fmt.Sprintf(" ORDER BY s.timestamp DESC LIMIT $%d", len(args)))
 
 	rows, err := r.pool.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -102,13 +115,41 @@ func (r *SignalRepository) ListSignals(ctx context.Context, filter domain.Signal
 		var direction string
 		var risk int16
 		var ts time.Time
+		var imageID int64
+		var mimeType string
+		var width int
+		var height int
+		var expiresAt time.Time
 
-		if err := rows.Scan(&s.Symbol, &s.Interval, &s.Indicator, &direction, &risk, &ts, &s.Details); err != nil {
+		if err := rows.Scan(
+			&s.ID,
+			&s.Symbol,
+			&s.Interval,
+			&s.Indicator,
+			&direction,
+			&risk,
+			&ts,
+			&s.Details,
+			&imageID,
+			&mimeType,
+			&width,
+			&height,
+			&expiresAt,
+		); err != nil {
 			return nil, err
 		}
 		s.Direction = domain.SignalDirection(direction)
 		s.Risk = domain.RiskLevel(risk)
 		s.Timestamp = ts.UTC()
+		if imageID > 0 {
+			s.Image = &domain.SignalImageRef{
+				ImageID:   imageID,
+				MimeType:  mimeType,
+				Width:     width,
+				Height:    height,
+				ExpiresAt: expiresAt.UTC(),
+			}
+		}
 		signals = append(signals, s)
 	}
 

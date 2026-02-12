@@ -144,7 +144,32 @@ Phase 4 is complete. The advisor layer includes:
 
 ---
 
-## Phase 5: ML Signal Engine v2
+## Phase 5: Signal Visualization — Chart Images for Signals ✅ **(Completed)**
+
+**Goal:** Generate a visual chart artifact for each generated signal so users can see the exact technical setup (candles + triggering indicator + signal annotation).
+
+- Generate PNG candlestick charts at signal-generation time.
+- Render only the triggering indicator for each signal.
+- Store image bytes in Postgres (`BYTEA`) with metadata and expiry.
+- Attach one image per signal in Telegram signal outputs and proactive alerts.
+- Expose image metadata in HTTP signal responses and expose binary retrieval endpoints.
+- Use non-blocking failure policy (signal persists even if chart render fails; retry async).
+- Retain images for 24 hours with scheduled cleanup.
+
+**Deliverable:** Every newly generated signal has either an associated image or a recorded render failure state; Telegram/API consumers can fetch chart images for recent signals.
+
+**Status:**
+Phase 5 is complete. The repository now includes:
+- `internal/chart/` Go-native signal chart renderer (candlesticks + per-signal indicator overlays).
+- `signal_images` Postgres table with status/error/retry metadata and expiry cleanup support.
+- Signal pipeline integration that persists signal IDs, renders/stores images, and records retryable failures.
+- Image maintenance job for periodic retry attempts and hourly expiry cleanup.
+- HTTP support for image retrieval (`GET /api/signals/:id/image`) and signal payload metadata.
+- Telegram `/signals` and proactive alerts now send one image per signal when available, with text fallback.
+
+---
+
+## Phase 6: ML Signal Engine v2
 
 **Goal:** Layer in learned models alongside classic indicators.
 
@@ -163,7 +188,7 @@ Phase 4 is complete. The advisor layer includes:
 
 ---
 
-## Phase 6: Fundamentals & Sentiment
+## Phase 7: Fundamentals & Sentiment
 
 **Goal:** Non-price signals.
 
@@ -178,7 +203,7 @@ Phase 4 is complete. The advisor layer includes:
 
 ---
 
-## Phase 7: SSH Terminal Interface
+## Phase 8: SSH Terminal Interface
 
 **Goal:** `ssh trading@yourdomain.com` gives you a TUI dashboard.
 
@@ -195,7 +220,7 @@ Phase 4 is complete. The advisor layer includes:
 
 ---
 
-## Phase 8: Hardening & Portfolio Tracking
+## Phase 9: Hardening & Portfolio Tracking
 
 - Paper trading / portfolio simulation (track hypothetical positions based on signals you "accept")
 - Risk-adjusted returns tracking (Sharpe ratio per risk level)
@@ -276,13 +301,19 @@ Complete. Recommended deployment flow is now:
          │ └───────────┘│
          └──────┬───────┘
                 │
+         ┌──────▼──────┐
+         │Chart Renderer│ ← Go PNG rendering for signal artifacts
+         │    (Go)      │
+         └──────┬───────┘
+                │
     ┌───────────┼───────────┐
     │           │           │
-┌───▼──┐  ┌────▼───┐  ┌────▼───┐
-│NeonDB│  │Supabase│  │ Redis  │
-│(OHLCV│  │(users, │  │(cache, │
-│ ts)  │  │signals)│  │ rates) │
-└──────┘  └────────┘  └────────┘
+┌───▼──────────┐ ┌────▼───┐ ┌────▼───┐
+│NeonDB        │ │Supabase│ │ Redis  │
+│(OHLCV,       │ │(users, │ │(cache, │
+│ signals,     │ │signals)│ │ rates) │
+│ signal_images)│ └────────┘ └────────┘
+└──────────────┘
 ```
 
 ---
@@ -309,7 +340,8 @@ Complete. Recommended deployment flow is now:
 | 2 | 2 | 1–2 weeks | First trading signals (RSI, MACD, Bollinger) ✅ |
 | 3 | 3 | 1 week | MCP service exposed for prices/candles/signals |
 | 4 | 4 | 1 week | Natural language advisor uses MCP-backed context |
-| 5 | 5 | 2–3 weeks | ML models running, backtesting accuracy tracked |
-| 6 | 6 | 2 weeks | Sentiment + on-chain signals integrated |
-| 7 | 7 | 1–2 weeks | SSH terminal interface live |
-| 8 | 8 | Ongoing | Paper trading, alerts, hardening |
+| 5 | 5 | 1 week | Signal chart images generated/stored and delivered via Telegram/API/MCP |
+| 6 | 6 | 2–3 weeks | ML models running, backtesting accuracy tracked |
+| 7 | 7 | 2 weeks | Sentiment + on-chain signals integrated |
+| 8 | 8 | 1–2 weeks | SSH terminal interface live |
+| 9 | 9 | Ongoing | Paper trading, alerts, hardening |

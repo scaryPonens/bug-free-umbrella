@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ type PriceQuerier interface {
 
 type SignalLister interface {
 	ListSignals(ctx context.Context, filter domain.SignalFilter) ([]domain.Signal, error)
+	GetSignalImage(ctx context.Context, signalID int64) (*domain.SignalImageData, error)
 }
 
 type Advisor interface {
@@ -41,7 +43,7 @@ func StartTelegramBot(priceService PriceQuerier, signalService SignalLister, adv
 	if err != nil {
 		log.Fatalf("failed to create Telegram bot: %v", err)
 	}
-	alerts := NewAlertDispatcher(b)
+	alerts := NewAlertDispatcher(b, signalService)
 
 	b.Handle("/ping", func(c tele.Context) error {
 		return c.Send("pong")
@@ -105,12 +107,15 @@ func StartTelegramBot(priceService PriceQuerier, signalService SignalLister, adv
 			return c.Send("No matching signals right now.")
 		}
 
-		lines := make([]string, 0, len(signals)+1)
-		lines = append(lines, "Latest signals:")
-		for _, s := range signals {
-			lines = append(lines, formatSignal(s))
+		if err := c.Send("Latest signals:"); err != nil {
+			return err
 		}
-		return c.Send(strings.Join(lines, "\n"))
+		for _, s := range signals {
+			if err := sendSignalWithOptionalImage(c, signalService, s); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	b.Handle("/alerts", func(c tele.Context) error {
@@ -243,7 +248,8 @@ func parseSignalArgs(args []string) (domain.SignalFilter, error) {
 
 func formatSignal(s domain.Signal) string {
 	return fmt.Sprintf(
-		"%s %s %s %s risk %d at %s",
+		"#%d %s %s %s %s risk %d at %s",
+		s.ID,
 		s.Symbol,
 		s.Interval,
 		strings.ToUpper(s.Indicator),
@@ -251,4 +257,22 @@ func formatSignal(s domain.Signal) string {
 		s.Risk,
 		s.Timestamp.UTC().Format(time.RFC822),
 	)
+}
+
+func sendSignalWithOptionalImage(c tele.Context, signalService SignalLister, s domain.Signal) error {
+	caption := formatSignal(s)
+	if signalService == nil || s.ID <= 0 {
+		return c.Send(caption)
+	}
+
+	imageData, err := signalService.GetSignalImage(context.Background(), s.ID)
+	if err != nil || imageData == nil || len(imageData.Bytes) == 0 {
+		return c.Send(caption)
+	}
+
+	photo := &tele.Photo{
+		File:    tele.FromReader(bytes.NewReader(imageData.Bytes)),
+		Caption: caption,
+	}
+	return c.Send(photo)
 }

@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"bug-free-umbrella/internal/cache"
+	"bug-free-umbrella/internal/chart"
 	"bug-free-umbrella/internal/config"
 	"bug-free-umbrella/internal/db"
+	"bug-free-umbrella/internal/job"
 	mcpserver "bug-free-umbrella/internal/mcp"
 	"bug-free-umbrella/internal/provider"
 	"bug-free-umbrella/internal/repository"
@@ -37,11 +39,15 @@ var (
 	initTracerFunc           = tracing.InitTracer
 	newCandleRepoFunc        = repository.NewCandleRepository
 	newSignalRepoFunc        = repository.NewSignalRepository
+	newSignalImageRepoFunc   = repository.NewSignalImageRepository
 	newMCPServerFunc         = mcpserver.NewServer
 	newMCPHandlerFunc        = mcpserver.NewHTTPTransportHandler
 	newPriceServiceFunc      = service.NewPriceService
-	newSignalServiceFunc     = service.NewSignalService
+	newSignalServiceFunc     = service.NewSignalServiceWithImages
 	newSignalEngineFunc      = signalengine.NewEngine
+	newChartRendererFunc     = chart.NewRenderer
+	newSignalImageJobFunc    = job.NewSignalImageMaintenance
+	startSignalImageJobFunc  = func(j *job.SignalImageMaintenance, ctx context.Context) { go j.Start(ctx) }
 	newCoinGeckoProviderFunc = func(tracer trace.Tracer) service.PriceProvider {
 		return provider.NewCoinGeckoProvider(tracer)
 	}
@@ -78,10 +84,14 @@ func main() {
 
 	candleRepo := newCandleRepoFunc(db.Pool, tracer)
 	signalRepo := newSignalRepoFunc(db.Pool, tracer)
+	signalImageRepo := newSignalImageRepoFunc(db.Pool, tracer)
 	cgProvider := newCoinGeckoProviderFunc(tracer)
 	priceService := newPriceServiceFunc(tracer, cgProvider, candleRepo, cache.Client)
 	signalEngine := newSignalEngineFunc(nil)
-	signalService := newSignalServiceFunc(tracer, candleRepo, signalRepo, signalEngine)
+	chartRenderer := newChartRendererFunc()
+	signalService := newSignalServiceFunc(tracer, candleRepo, signalRepo, signalEngine, signalImageRepo, chartRenderer)
+	imageJob := newSignalImageJobFunc(tracer, signalService)
+	startSignalImageJobFunc(imageJob, ctx)
 
 	mcpSrv := newMCPServerFunc(tracer, priceService, signalService, mcpserver.ServerConfig{
 		RequestTimeout: time.Duration(cfg.MCPRequestTimeoutSecs) * time.Second,

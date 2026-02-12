@@ -13,6 +13,7 @@ import (
 	"bug-free-umbrella/internal/advisor"
 	"bug-free-umbrella/internal/bot"
 	"bug-free-umbrella/internal/cache"
+	"bug-free-umbrella/internal/chart"
 	"bug-free-umbrella/internal/config"
 	"bug-free-umbrella/internal/db"
 	"bug-free-umbrella/internal/handler"
@@ -41,27 +42,31 @@ var (
 	initTracerFunc           = tracing.InitTracer
 	newCandleRepoFunc        = repository.NewCandleRepository
 	newSignalRepoFunc        = repository.NewSignalRepository
+	newSignalImageRepoFunc   = repository.NewSignalImageRepository
 	newCoinGeckoProviderFunc = func(tracer trace.Tracer) service.PriceProvider {
 		return provider.NewCoinGeckoProvider(tracer)
 	}
-	newSignalEngineFunc    = signalengine.NewEngine
-	newPriceServiceFunc    = service.NewPriceService
-	newSignalServiceFunc   = service.NewSignalService
-	newPricePollerFunc     = job.NewPricePoller
-	newSignalPollerFunc    = job.NewSignalPoller
-	startPollerFunc        = func(p *job.PricePoller, ctx context.Context) { go p.Start(ctx) }
-	startSignalPollerFunc  = func(p *job.SignalPoller, ctx context.Context) { go p.Start(ctx) }
-	newConversationRepoFunc = repository.NewConversationRepository
-	newOpenAIClientFunc     = advisor.NewOpenAIClient
-	newAdvisorServiceFunc   = advisor.NewAdvisorService
-	startTelegramBotFunc    = bot.StartTelegramBot
-	newWorkServiceFunc      = service.NewWorkService
-	newHandlerFunc         = handler.New
-	newRouterFunc          = gin.Default
-	setupSignalNotify      = ossignal.Notify
-	waitForSignalFunc      = func(quit <-chan os.Signal) { <-quit }
-	startHTTPServerFunc    = func(srv *http.Server) error { return srv.ListenAndServe() }
-	shutdownHTTPServerFunc = func(srv *http.Server, ctx context.Context) error { return srv.Shutdown(ctx) }
+	newSignalEngineFunc            = signalengine.NewEngine
+	newPriceServiceFunc            = service.NewPriceService
+	newSignalServiceWithImagesFunc = service.NewSignalServiceWithImages
+	newChartRendererFunc           = chart.NewRenderer
+	newPricePollerFunc             = job.NewPricePoller
+	newSignalPollerFunc            = job.NewSignalPoller
+	newSignalImageJobFunc          = job.NewSignalImageMaintenance
+	startPollerFunc                = func(p *job.PricePoller, ctx context.Context) { go p.Start(ctx) }
+	startSignalPollerFunc          = func(p *job.SignalPoller, ctx context.Context) { go p.Start(ctx) }
+	startSignalImageJobFunc        = func(j *job.SignalImageMaintenance, ctx context.Context) { go j.Start(ctx) }
+	newConversationRepoFunc        = repository.NewConversationRepository
+	newOpenAIClientFunc            = advisor.NewOpenAIClient
+	newAdvisorServiceFunc          = advisor.NewAdvisorService
+	startTelegramBotFunc           = bot.StartTelegramBot
+	newWorkServiceFunc             = service.NewWorkService
+	newHandlerFunc                 = handler.New
+	newRouterFunc                  = gin.Default
+	setupSignalNotify              = ossignal.Notify
+	waitForSignalFunc              = func(quit <-chan os.Signal) { <-quit }
+	startHTTPServerFunc            = func(srv *http.Server) error { return srv.ListenAndServe() }
+	shutdownHTTPServerFunc         = func(srv *http.Server, ctx context.Context) error { return srv.Shutdown(ctx) }
 )
 
 // @title           Bug Free Umbrella API
@@ -98,12 +103,14 @@ func main() {
 	// Create repositories
 	candleRepo := newCandleRepoFunc(db.Pool, tracer)
 	signalRepo := newSignalRepoFunc(db.Pool, tracer)
+	signalImageRepo := newSignalImageRepoFunc(db.Pool, tracer)
 
 	// Create providers and services
 	cgProvider := newCoinGeckoProviderFunc(tracer)
 	priceService := newPriceServiceFunc(tracer, cgProvider, candleRepo, cache.Client)
 	signalEngine := newSignalEngineFunc(nil)
-	signalService := newSignalServiceFunc(tracer, candleRepo, signalRepo, signalEngine)
+	chartRenderer := newChartRendererFunc()
+	signalService := newSignalServiceWithImagesFunc(tracer, candleRepo, signalRepo, signalEngine, signalImageRepo, chartRenderer)
 
 	// Create conversation repository and advisor
 	convRepo := newConversationRepoFunc(db.Pool, tracer)
@@ -124,6 +131,8 @@ func main() {
 	startPollerFunc(poller, ctx)
 	signalPoller := newSignalPollerFunc(tracer, signalService, alertDispatcher)
 	startSignalPollerFunc(signalPoller, ctx)
+	signalImageJob := newSignalImageJobFunc(tracer, signalService)
+	startSignalImageJobFunc(signalImageJob, ctx)
 
 	// Create handlers and routes
 	workService := newWorkServiceFunc(tracer)

@@ -97,6 +97,10 @@ func (s *stubPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows
 	return &stubRows{data: dataCopy}, nil
 }
 
+func (s *stubPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return &stubRow{}
+}
+
 type stubBatchResults struct {
 	execCalls int
 }

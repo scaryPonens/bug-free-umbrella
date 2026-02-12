@@ -92,6 +92,10 @@ func (s *convStubPool) Query(ctx context.Context, sql string, args ...any) (pgx.
 	return &convStubRows{data: dataCopy}, nil
 }
 
+func (s *convStubPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return &convStubRow{}
+}
+
 type convStubBatchResults struct{}
 
 func (convStubBatchResults) Exec() (pgconn.CommandTag, error) { return pgconn.CommandTag{}, nil }
@@ -104,9 +108,9 @@ type convStubRows struct {
 	idx  int
 }
 
-func (r *convStubRows) Close()                                    {}
-func (r *convStubRows) Err() error                                { return nil }
-func (r *convStubRows) CommandTag() pgconn.CommandTag              { return pgconn.CommandTag{} }
+func (r *convStubRows) Close()                                       {}
+func (r *convStubRows) Err() error                                   { return nil }
+func (r *convStubRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
 func (r *convStubRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
 
 func (r *convStubRows) Next() bool {
@@ -136,7 +140,7 @@ func (r *convStubRows) Scan(dest ...any) error {
 }
 
 func (r *convStubRows) Values() ([]any, error) { return nil, nil }
-func (r *convStubRows) RawValues() [][]byte     { return nil }
+func (r *convStubRows) RawValues() [][]byte    { return nil }
 func (r *convStubRows) Conn() *pgx.Conn        { return nil }
 
 type convStubRow struct{}

@@ -34,4 +34,5 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/api/prices/:symbol", h.GetPrice)
 	r.GET("/api/candles/:symbol", h.GetCandles)
 	r.GET("/api/signals", h.GetSignals)
+	r.GET("/api/signals/:id/image", h.GetSignalImage)
 }

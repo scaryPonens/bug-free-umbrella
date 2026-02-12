@@ -9,6 +9,7 @@ import (
 
 	"bug-free-umbrella/internal/advisor"
 	"bug-free-umbrella/internal/bot"
+	"bug-free-umbrella/internal/chart"
 	"bug-free-umbrella/internal/config"
 	"bug-free-umbrella/internal/domain"
 	"bug-free-umbrella/internal/job"
@@ -63,12 +64,16 @@ func stubServerDeps() func() {
 	origInitRedis := initRedisFunc
 	origInitTracer := initTracerFunc
 	origNewSignalRepo := newSignalRepoFunc
+	origNewSignalImageRepo := newSignalImageRepoFunc
 	origNewProvider := newCoinGeckoProviderFunc
 	origNewSignalEngine := newSignalEngineFunc
-	origNewSignalService := newSignalServiceFunc
+	origNewSignalService := newSignalServiceWithImagesFunc
+	origNewChartRenderer := newChartRendererFunc
 	origStartPoller := startPollerFunc
 	origNewSignalPoller := newSignalPollerFunc
 	origStartSignalPoller := startSignalPollerFunc
+	origNewSignalImageJob := newSignalImageJobFunc
+	origStartSignalImageJob := startSignalImageJobFunc
 	origNewConvRepo := newConversationRepoFunc
 	origNewOpenAIClient := newOpenAIClientFunc
 	origNewAdvisor := newAdvisorServiceFunc
@@ -92,21 +97,29 @@ func stubServerDeps() func() {
 	newSignalRepoFunc = func(repository.PgxPool, trace.Tracer) *repository.SignalRepository {
 		return nil
 	}
+	newSignalImageRepoFunc = func(repository.PgxPool, trace.Tracer) *repository.SignalImageRepository {
+		return nil
+	}
 	newCoinGeckoProviderFunc = func(trace.Tracer) service.PriceProvider { return stubPriceProvider{} }
 	newSignalEngineFunc = func(func() time.Time) *signalengine.Engine { return signalengine.NewEngine(nil) }
-	newSignalServiceFunc = func(
+	newSignalServiceWithImagesFunc = func(
 		trace.Tracer,
 		service.SignalCandleRepository,
 		service.SignalRepository,
 		service.SignalEngine,
+		service.SignalImageRepository,
+		service.SignalChartRenderer,
 	) *service.SignalService {
 		return nil
 	}
+	newChartRendererFunc = func() *chart.Renderer { return nil }
 	startPollerFunc = func(*job.PricePoller, context.Context) {}
 	newSignalPollerFunc = func(trace.Tracer, job.SignalGenerator, job.SignalAlertSink) *job.SignalPoller {
 		return nil
 	}
 	startSignalPollerFunc = func(*job.SignalPoller, context.Context) {}
+	newSignalImageJobFunc = func(trace.Tracer, job.SignalImageMaintainer) *job.SignalImageMaintenance { return nil }
+	startSignalImageJobFunc = func(*job.SignalImageMaintenance, context.Context) {}
 	newConversationRepoFunc = func(repository.PgxPool, trace.Tracer) *repository.ConversationRepository {
 		return nil
 	}
@@ -131,12 +144,16 @@ func stubServerDeps() func() {
 		initRedisFunc = origInitRedis
 		initTracerFunc = origInitTracer
 		newSignalRepoFunc = origNewSignalRepo
+		newSignalImageRepoFunc = origNewSignalImageRepo
 		newCoinGeckoProviderFunc = origNewProvider
 		newSignalEngineFunc = origNewSignalEngine
-		newSignalServiceFunc = origNewSignalService
+		newSignalServiceWithImagesFunc = origNewSignalService
+		newChartRendererFunc = origNewChartRenderer
 		startPollerFunc = origStartPoller
 		newSignalPollerFunc = origNewSignalPoller
 		startSignalPollerFunc = origStartSignalPoller
+		newSignalImageJobFunc = origNewSignalImageJob
+		startSignalImageJobFunc = origStartSignalImageJob
 		newConversationRepoFunc = origNewConvRepo
 		newOpenAIClientFunc = origNewOpenAIClient
 		newAdvisorServiceFunc = origNewAdvisor

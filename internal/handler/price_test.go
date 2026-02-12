@@ -200,9 +200,9 @@ type stubSignalStore struct {
 	signals []domain.Signal
 }
 
-func (s *stubSignalStore) InsertSignals(ctx context.Context, signals []domain.Signal) error {
+func (s *stubSignalStore) InsertSignals(ctx context.Context, signals []domain.Signal) ([]domain.Signal, error) {
 	s.signals = append(s.signals, signals...)
-	return nil
+	return append([]domain.Signal(nil), signals...), nil
 }
 
 func (s *stubSignalStore) ListSignals(ctx context.Context, filter domain.SignalFilter) ([]domain.Signal, error) {

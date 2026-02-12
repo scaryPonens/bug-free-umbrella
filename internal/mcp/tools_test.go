@@ -49,6 +49,14 @@ func TestToolsListAndInvoke(t *testing.T) {
 	if len(signals.lastGenerateIntervals) != 1 || signals.lastGenerateIntervals[0] != "1h" {
 		t.Fatalf("unexpected generate intervals: %+v", signals.lastGenerateIntervals)
 	}
+
+	res, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "signals_list", Arguments: map[string]any{"symbol": "BTC"}})
+	if err != nil {
+		t.Fatalf("signals_list tool failed: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected signals_list tool error: %+v", res.Content)
+	}
 }
 
 func TestToolsValidationFailure(t *testing.T) {
@@ -72,5 +80,26 @@ func TestToolsValidationFailure(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("expected tool-level validation error")
+	}
+}
+
+func TestRemovedSignalImageTool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	srv, _, _ := testServer()
+	session, shutdown, err := connectInMemory(ctx, srv)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	defer shutdown()
+	defer session.Close()
+
+	_, err = session.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name:      "signal_image_get",
+		Arguments: map[string]any{"signal_id": 2},
+	})
+	if err == nil {
+		t.Fatal("expected missing tool error for signal_image_get")
 	}
 }

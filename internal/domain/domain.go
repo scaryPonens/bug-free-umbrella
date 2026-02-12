@@ -23,6 +23,7 @@ const (
 )
 
 type Signal struct {
+	ID        int64           `json:"id"`
 	Symbol    string          `json:"symbol"`
 	Interval  string          `json:"interval"`
 	Indicator string          `json:"indicator"`
@@ -30,6 +31,20 @@ type Signal struct {
 	Risk      RiskLevel       `json:"risk"`
 	Direction SignalDirection `json:"direction"`
 	Details   string          `json:"details,omitempty"`
+	Image     *SignalImageRef `json:"image,omitempty"`
+}
+
+type SignalImageRef struct {
+	ImageID   int64     `json:"image_id"`
+	MimeType  string    `json:"mime_type"`
+	Width     int       `json:"width"`
+	Height    int       `json:"height"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type SignalImageData struct {
+	Ref   SignalImageRef
+	Bytes []byte
 }
 
 type SignalFilter struct {
