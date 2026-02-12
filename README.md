@@ -11,7 +11,7 @@ Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV can
 - OHLCV candle storage in Postgres (5m, 15m, 1h, 4h, 1d intervals)
 - Redis cache-aside for latest prices
 - Background polling with rate-limited CoinGecko API calls
-- Telegram bot (`/ping`, `/price`, `/volume`)
+- Telegram bot (`/ping`, `/price`, `/volume`, `/signals`, `/alerts`)
 - OpenTelemetry tracing with Jaeger
 - Configurable via `.env` file
 
@@ -109,6 +109,9 @@ Set `TELEGRAM_BOT_TOKEN` in your `.env` file to enable the bot.
 | /volume SOL     | 24h trading volume, price, 24h change    |
 | /signals BTC    | Latest generated signals for an asset     |
 | /signals --risk 3 | Latest signals filtered by risk level   |
+| /alerts on      | Enable proactive signal push alerts       |
+| /alerts off     | Disable proactive signal push alerts      |
+| /alerts status  | Check whether proactive alerts are enabled |
 
 Supported symbols: BTC, ETH, SOL, XRP, ADA, DOGE, DOT, AVAX, LINK, MATIC.
 

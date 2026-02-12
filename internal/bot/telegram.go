@@ -23,11 +23,11 @@ type SignalLister interface {
 	ListSignals(ctx context.Context, filter domain.SignalFilter) ([]domain.Signal, error)
 }
 
-func StartTelegramBot(priceService PriceQuerier, signalService SignalLister) {
+func StartTelegramBot(priceService PriceQuerier, signalService SignalLister) *AlertDispatcher {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		log.Println("TELEGRAM_BOT_TOKEN not set, skipping Telegram bot startup")
-		return
+		return nil
 	}
 	pref := tele.Settings{
 		Token:  token,
@@ -37,6 +37,7 @@ func StartTelegramBot(priceService PriceQuerier, signalService SignalLister) {
 	if err != nil {
 		log.Fatalf("failed to create Telegram bot: %v", err)
 	}
+	alerts := NewAlertDispatcher(b)
 
 	b.Handle("/ping", func(c tele.Context) error {
 		return c.Send("pong")
@@ -108,8 +109,39 @@ func StartTelegramBot(priceService PriceQuerier, signalService SignalLister) {
 		return c.Send(strings.Join(lines, "\n"))
 	})
 
+	b.Handle("/alerts", func(c tele.Context) error {
+		chat := c.Chat()
+		if chat == nil {
+			return c.Send("Unable to detect chat")
+		}
+
+		mode, err := parseAlertMode(c.Args())
+		if err != nil {
+			return c.Send("Usage: /alerts on | /alerts off | /alerts status")
+		}
+
+		switch mode {
+		case "on":
+			if alerts.Subscribe(chat.ID) {
+				return c.Send("Proactive alerts enabled for this chat.")
+			}
+			return c.Send("Proactive alerts are already enabled for this chat.")
+		case "off":
+			if alerts.Unsubscribe(chat.ID) {
+				return c.Send("Proactive alerts disabled for this chat.")
+			}
+			return c.Send("Proactive alerts are already disabled for this chat.")
+		default:
+			if alerts.IsSubscribed(chat.ID) {
+				return c.Send("Alerts status: ON")
+			}
+			return c.Send("Alerts status: OFF")
+		}
+	})
+
 	log.Println("Telegram bot started")
 	go b.Start()
+	return alerts
 }
 
 func parseSignalArgs(args []string) (domain.SignalFilter, error) {

@@ -82,9 +82,11 @@ func stubServerDeps() func() {
 		return nil
 	}
 	startPollerFunc = func(*job.PricePoller, context.Context) {}
-	newSignalPollerFunc = func(trace.Tracer, job.SignalGenerator) *job.SignalPoller { return nil }
+	newSignalPollerFunc = func(trace.Tracer, job.SignalGenerator, job.SignalAlertSink) *job.SignalPoller {
+		return nil
+	}
 	startSignalPollerFunc = func(*job.SignalPoller, context.Context) {}
-	startTelegramBotFunc = func(bot.PriceQuerier, bot.SignalLister) {}
+	startTelegramBotFunc = func(bot.PriceQuerier, bot.SignalLister) *bot.AlertDispatcher { return nil }
 	newRouterFunc = func(...gin.OptionFunc) *gin.Engine { return gin.New() }
 	setupSignalNotify = func(c chan<- os.Signal, sig ...os.Signal) {}
 	waitForSignalFunc = func(<-chan os.Signal) {}

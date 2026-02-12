@@ -108,15 +108,15 @@ func main() {
 	signalEngine := newSignalEngineFunc(nil)
 	signalService := newSignalServiceFunc(tracer, candleRepo, signalRepo, signalEngine)
 
+	// Start Telegram bot
+	os.Setenv("TELEGRAM_BOT_TOKEN", cfg.TelegramBotToken)
+	alertDispatcher := startTelegramBotFunc(priceService, signalService)
+
 	// Start background pollers (stopped by ctx cancel)
 	poller := newPricePollerFunc(tracer, priceService, cfg.CoinGeckoPollSecs)
 	startPollerFunc(poller, ctx)
-	signalPoller := newSignalPollerFunc(tracer, signalService)
+	signalPoller := newSignalPollerFunc(tracer, signalService, alertDispatcher)
 	startSignalPollerFunc(signalPoller, ctx)
-
-	// Start Telegram bot
-	os.Setenv("TELEGRAM_BOT_TOKEN", cfg.TelegramBotToken)
-	startTelegramBotFunc(priceService, signalService)
 
 	// Create handlers and routes
 	workService := newWorkServiceFunc(tracer)

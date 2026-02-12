@@ -2,7 +2,9 @@ package job
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"bug-free-umbrella/internal/domain"
@@ -15,20 +17,33 @@ var (
 	longSignalIntervals  = []string{"4h", "1d"}
 )
 
+const maxSeenAlertSignals = 10000
+
 // SignalPoller periodically computes and stores technical signals.
 type SignalPoller struct {
 	tracer        trace.Tracer
 	signalService SignalGenerator
+	alertSink     SignalAlertSink
+
+	alertMu        sync.Mutex
+	seenAlertKeys  map[string]struct{}
+	seenAlertOrder []string
 }
 
 type SignalGenerator interface {
 	GenerateForSymbol(ctx context.Context, symbol string, intervals []string) ([]domain.Signal, error)
 }
 
-func NewSignalPoller(tracer trace.Tracer, signalService SignalGenerator) *SignalPoller {
+type SignalAlertSink interface {
+	NotifySignals(ctx context.Context, signals []domain.Signal) error
+}
+
+func NewSignalPoller(tracer trace.Tracer, signalService SignalGenerator, alertSink SignalAlertSink) *SignalPoller {
 	return &SignalPoller{
 		tracer:        tracer,
 		signalService: signalService,
+		alertSink:     alertSink,
+		seenAlertKeys: make(map[string]struct{}),
 	}
 }
 
@@ -73,10 +88,52 @@ func (p *SignalPoller) fetchShortBatch(ctx context.Context, coinIndex *int, coun
 		symbol := symbols[*coinIndex%len(symbols)]
 		*coinIndex++
 
-		if _, err := p.signalService.GenerateForSymbol(ctx, symbol, shortSignalIntervals); err != nil {
+		signals, err := p.signalService.GenerateForSymbol(ctx, symbol, shortSignalIntervals)
+		if err != nil {
 			log.Printf("short signal generation error for %s: %v", symbol, err)
+			continue
+		}
+		p.notifySignals(ctx, signals)
+	}
+}
+
+func (p *SignalPoller) notifySignals(ctx context.Context, generated []domain.Signal) {
+	if p.alertSink == nil || len(generated) == 0 {
+		return
+	}
+
+	fresh := p.filterUnseenSignals(generated)
+	if len(fresh) == 0 {
+		return
+	}
+	if err := p.alertSink.NotifySignals(ctx, fresh); err != nil {
+		log.Printf("signal alert dispatch error: %v", err)
+	}
+}
+
+func (p *SignalPoller) filterUnseenSignals(generated []domain.Signal) []domain.Signal {
+	p.alertMu.Lock()
+	defer p.alertMu.Unlock()
+
+	fresh := make([]domain.Signal, 0, len(generated))
+	for _, s := range generated {
+		key := signalAlertKey(s)
+		if _, exists := p.seenAlertKeys[key]; exists {
+			continue
+		}
+		p.seenAlertKeys[key] = struct{}{}
+		p.seenAlertOrder = append(p.seenAlertOrder, key)
+		fresh = append(fresh, s)
+	}
+
+	if overflow := len(p.seenAlertOrder) - maxSeenAlertSignals; overflow > 0 {
+		for i := 0; i < overflow; i++ {
+			oldest := p.seenAlertOrder[0]
+			p.seenAlertOrder = p.seenAlertOrder[1:]
+			delete(p.seenAlertKeys, oldest)
 		}
 	}
+	return fresh
 }
 
 func (p *SignalPoller) pollLongSignals(ctx context.Context) {
@@ -102,7 +159,21 @@ func (p *SignalPoller) fetchLongBatch(ctx context.Context, coinIndex *int) {
 	symbol := symbols[*coinIndex%len(symbols)]
 	*coinIndex++
 
-	if _, err := p.signalService.GenerateForSymbol(ctx, symbol, longSignalIntervals); err != nil {
+	signals, err := p.signalService.GenerateForSymbol(ctx, symbol, longSignalIntervals)
+	if err != nil {
 		log.Printf("long signal generation error for %s: %v", symbol, err)
+		return
 	}
+	p.notifySignals(ctx, signals)
+}
+
+func signalAlertKey(s domain.Signal) string {
+	return fmt.Sprintf(
+		"%s|%s|%s|%s|%d",
+		s.Symbol,
+		s.Interval,
+		s.Indicator,
+		s.Direction,
+		s.Timestamp.UTC().Unix(),
+	)
 }
