@@ -80,22 +80,41 @@ Phase 2 is complete. The repository now includes:
 
 ---
 
-## Phase 3: LLM Integration — The Advisor Layer
+## Phase 3: MCP Service Layer (Data + Tools First)
 
-**Goal:** Natural language interaction powered by an LLM that synthesizes signals.
+**Goal:** Expose bot capabilities through an MCP service before building the advisor UI/LLM layer.
 
-- Integrate Claude or OpenAI API as the "advisor brain"
-- System prompt encodes your risk framework, trading philosophy, and current signals as context
-- Flow: `user message → fetch relevant signals + recent prices from DB → construct prompt → LLM response → Telegram`
-- Conversation history stored in Supabase (per-user thread)
-- Commands become conversational: "What do you think about SOL right now?" or "Give me your riskiest play"
-- The LLM doesn't *make* the signals — it **interprets and communicates** them. Keep signal generation deterministic.
+- Stand up an MCP server in Go that exposes:
+  - Price reads (`latest prices`, `price by symbol`)
+  - Candle reads (`candles by symbol/interval/limit`)
+  - Signal reads (`signals with symbol/risk/indicator filters`)
+  - Optional signal trigger tool (`generate signals for symbol/interval`) for controlled workflows
+- Treat existing HTTP/service layer as source of truth; MCP is an integration contract, not duplicated logic
+- Add auth and access controls appropriate for external tool clients
+- Add operational guardrails: request limits, structured errors, tracing spans around tool calls
+- Keep signal generation deterministic; MCP only exposes and orchestrates existing capabilities
 
-**Deliverable:** You chat with the bot naturally. It references real data and real signals.
+**Deliverable:** Any MCP-compatible client can query prices/candles/signals and invoke supported tools without using Telegram or direct DB access.
 
 ---
 
-## Phase 4: ML Signal Engine v2
+## Phase 4: LLM Integration — The Advisor Layer
+
+**Goal:** Natural language interaction powered by an LLM that synthesizes signals via the MCP surface.
+
+- Integrate Claude or OpenAI API as the "advisor brain"
+- System prompt encodes your risk framework, trading philosophy, and current signals as context
+- Prefer fetching data through MCP tools/resources (or equivalent service adapters) for consistency
+- Flow: `user message → gather context (signals + prices) → construct prompt → LLM response → Telegram`
+- Conversation history stored in Supabase (per-user thread)
+- Commands become conversational: "What do you think about SOL right now?" or "Give me your riskiest play"
+- The LLM doesn't *make* the signals — it **interprets and communicates** them
+
+**Deliverable:** You chat with the bot naturally. It references real data and real signals through a stable integration layer.
+
+---
+
+## Phase 5: ML Signal Engine v2
 
 **Goal:** Layer in learned models alongside classic indicators.
 
@@ -114,7 +133,7 @@ Phase 2 is complete. The repository now includes:
 
 ---
 
-## Phase 5: Fundamentals & Sentiment
+## Phase 6: Fundamentals & Sentiment
 
 **Goal:** Non-price signals.
 
@@ -129,7 +148,7 @@ Phase 2 is complete. The repository now includes:
 
 ---
 
-## Phase 6: SSH Terminal Interface
+## Phase 7: SSH Terminal Interface
 
 **Goal:** `ssh trading@yourdomain.com` gives you a TUI dashboard.
 
@@ -146,7 +165,7 @@ Phase 2 is complete. The repository now includes:
 
 ---
 
-## Phase 7: Hardening & Portfolio Tracking
+## Phase 8: Hardening & Portfolio Tracking
 
 - Paper trading / portfolio simulation (track hypothetical positions based on signals you "accept")
 - Risk-adjusted returns tracking (Sharpe ratio per risk level)
@@ -184,8 +203,13 @@ Complete. Recommended deployment flow is now:
        └────────┬───────────┘
                 │
          ┌──────▼──────┐
+         │  MCP Service │ ← tools/resources contract
+         │  (Go service)│
+         └──────┬───────┘
+                │
+         ┌──────▼──────┐
          │  LLM Advisor │ ← Claude/OpenAI API
-         │  (Go service) │
+         │  (consumer)  │
          └──────┬───────┘
                 │
          ┌──────▼──────┐
@@ -215,6 +239,7 @@ Complete. Recommended deployment flow is now:
 | Concern | Choice | Why |
 |---|---|---|
 | Telegram bot | `telebot` (already integrated) | Existing implementation is live and tested |
+| MCP | Go MCP server | Stable integration contract before advisor clients |
 | SSH TUI | Wish + Bubble Tea | Charm ecosystem, built for this |
 | LLM | Claude API | Already in the ecosystem |
 | TA indicators | `github.com/sdcoffey/techan` or hand-roll | Techan is decent; pure functions are easy to write in Go |
@@ -229,8 +254,9 @@ Complete. Recommended deployment flow is now:
 |---|---|---|---|
 | 1 | 0 + 1 | 1–2 weeks | Bot responds with live prices, data accumulating |
 | 2 | 2 | 1–2 weeks | First trading signals (RSI, MACD, Bollinger) ✅ |
-| 3 | 3 | 1 week | Natural language chat with LLM advisor |
-| 4 | 4 | 2–3 weeks | ML models running, backtesting accuracy tracked |
-| 5 | 5 | 2 weeks | Sentiment + on-chain signals integrated |
-| 6 | 6 | 1–2 weeks | SSH terminal interface live |
-| 7 | 7 | Ongoing | Paper trading, alerts, hardening |
+| 3 | 3 | 1 week | MCP service exposed for prices/candles/signals |
+| 4 | 4 | 1 week | Natural language advisor uses MCP-backed context |
+| 5 | 5 | 2–3 weeks | ML models running, backtesting accuracy tracked |
+| 6 | 6 | 2 weeks | Sentiment + on-chain signals integrated |
+| 7 | 7 | 1–2 weeks | SSH terminal interface live |
+| 8 | 8 | Ongoing | Paper trading, alerts, hardening |
