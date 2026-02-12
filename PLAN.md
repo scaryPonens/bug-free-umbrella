@@ -229,7 +229,7 @@ Phase 6 is **partially complete** (initial v2 slice shipped). The repository now
   - outcome resolver idempotency edge cases
   - end-to-end accuracy/backtesting validation scenarios
 - Complete operational rollout steps in production:
-  - explicit one-time historical feature backfill execution
+  - explicit one-time historical feature backfill execution (**implemented via `cmd/mlbackfill`; remaining: run it in target environments**)
   - enable/monitor workflow (`ML_ENABLED=true`) with ongoing drift/accuracy monitoring against `ml_accuracy_daily`.
 
 ---

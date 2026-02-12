@@ -13,6 +13,7 @@ RUN swag init -g cmd/server/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -o mcp ./cmd/mcp
 RUN CGO_ENABLED=0 GOOS=linux go build -o migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux go build -o mlbackfill ./cmd/mlbackfill
 
 FROM alpine:latest
 
@@ -23,6 +24,7 @@ WORKDIR /root/
 COPY --from=builder /app/main .
 COPY --from=builder /app/mcp .
 COPY --from=builder /app/migrate .
+COPY --from=builder /app/mlbackfill .
 
 EXPOSE 8080
 

@@ -257,6 +257,26 @@ Check current applied version:
 go run ./cmd/migrate version
 ```
 
+## ML Backfill (1h candles)
+
+Before enabling `ML_ENABLED=true`, backfill enough `1h` candle history for training.
+
+Run one-shot backfill for all supported symbols:
+
+```sh
+go run ./cmd/mlbackfill
+```
+
+Override days and symbols:
+
+```sh
+go run ./cmd/mlbackfill --days 90 --symbols BTC,ETH,SOL
+```
+
+Defaults:
+- `--days` defaults to `ML_BACKFILL_DAYS`, then `ML_TRAIN_WINDOW_DAYS`, then `90`
+- `--symbols` defaults to all `SupportedSymbols`
+
 
 ## Regenerating Swagger Docs
 
