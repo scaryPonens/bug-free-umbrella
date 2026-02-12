@@ -7,10 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"bug-free-umbrella/internal/bot"
 	"bug-free-umbrella/internal/config"
 	"bug-free-umbrella/internal/domain"
 	"bug-free-umbrella/internal/job"
+	"bug-free-umbrella/internal/repository"
 	"bug-free-umbrella/internal/service"
+	signalengine "bug-free-umbrella/internal/signal"
 
 	"github.com/gin-gonic/gin"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -41,8 +44,13 @@ func stubServerDeps() func() {
 	origInitPostgres := initPostgresFunc
 	origInitRedis := initRedisFunc
 	origInitTracer := initTracerFunc
+	origNewSignalRepo := newSignalRepoFunc
 	origNewProvider := newCoinGeckoProviderFunc
+	origNewSignalEngine := newSignalEngineFunc
+	origNewSignalService := newSignalServiceFunc
 	origStartPoller := startPollerFunc
+	origNewSignalPoller := newSignalPollerFunc
+	origStartSignalPoller := startSignalPollerFunc
 	origStartTelegram := startTelegramBotFunc
 	origNewRouter := newRouterFunc
 	origSetupSignal := setupSignalNotify
@@ -60,9 +68,23 @@ func stubServerDeps() func() {
 		tp := sdktrace.NewTracerProvider()
 		return tp, tp.Tracer("test"), nil
 	}
+	newSignalRepoFunc = func(repository.PgxPool, trace.Tracer) *repository.SignalRepository {
+		return nil
+	}
 	newCoinGeckoProviderFunc = func(trace.Tracer) service.PriceProvider { return stubPriceProvider{} }
+	newSignalEngineFunc = func(func() time.Time) *signalengine.Engine { return signalengine.NewEngine(nil) }
+	newSignalServiceFunc = func(
+		trace.Tracer,
+		service.SignalCandleRepository,
+		service.SignalRepository,
+		service.SignalEngine,
+	) *service.SignalService {
+		return nil
+	}
 	startPollerFunc = func(*job.PricePoller, context.Context) {}
-	startTelegramBotFunc = func(*service.PriceService) {}
+	newSignalPollerFunc = func(trace.Tracer, job.SignalGenerator) *job.SignalPoller { return nil }
+	startSignalPollerFunc = func(*job.SignalPoller, context.Context) {}
+	startTelegramBotFunc = func(bot.PriceQuerier, bot.SignalLister) {}
 	newRouterFunc = func(...gin.OptionFunc) *gin.Engine { return gin.New() }
 	setupSignalNotify = func(c chan<- os.Signal, sig ...os.Signal) {}
 	waitForSignalFunc = func(<-chan os.Signal) {}
@@ -75,8 +97,13 @@ func stubServerDeps() func() {
 		initPostgresFunc = origInitPostgres
 		initRedisFunc = origInitRedis
 		initTracerFunc = origInitTracer
+		newSignalRepoFunc = origNewSignalRepo
 		newCoinGeckoProviderFunc = origNewProvider
+		newSignalEngineFunc = origNewSignalEngine
+		newSignalServiceFunc = origNewSignalService
 		startPollerFunc = origStartPoller
+		newSignalPollerFunc = origNewSignalPoller
+		startSignalPollerFunc = origStartSignalPoller
 		startTelegramBotFunc = origStartTelegram
 		newRouterFunc = origNewRouter
 		setupSignalNotify = origSetupSignal

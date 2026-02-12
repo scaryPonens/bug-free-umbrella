@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
+	ossignal "os/signal"
 	"syscall"
 	"time"
 
@@ -18,6 +18,7 @@ import (
 	"bug-free-umbrella/internal/provider"
 	"bug-free-umbrella/internal/repository"
 	"bug-free-umbrella/internal/service"
+	signalengine "bug-free-umbrella/internal/signal"
 	"bug-free-umbrella/pkg/tracing"
 
 	"github.com/gin-gonic/gin"
@@ -37,17 +38,22 @@ var (
 	initRedisFunc            = cache.InitRedis
 	initTracerFunc           = tracing.InitTracer
 	newCandleRepoFunc        = repository.NewCandleRepository
+	newSignalRepoFunc        = repository.NewSignalRepository
 	newCoinGeckoProviderFunc = func(tracer trace.Tracer) service.PriceProvider {
 		return provider.NewCoinGeckoProvider(tracer)
 	}
+	newSignalEngineFunc    = signalengine.NewEngine
 	newPriceServiceFunc    = service.NewPriceService
+	newSignalServiceFunc   = service.NewSignalService
 	newPricePollerFunc     = job.NewPricePoller
+	newSignalPollerFunc    = job.NewSignalPoller
 	startPollerFunc        = func(p *job.PricePoller, ctx context.Context) { go p.Start(ctx) }
+	startSignalPollerFunc  = func(p *job.SignalPoller, ctx context.Context) { go p.Start(ctx) }
 	startTelegramBotFunc   = bot.StartTelegramBot
 	newWorkServiceFunc     = service.NewWorkService
 	newHandlerFunc         = handler.New
 	newRouterFunc          = gin.Default
-	setupSignalNotify      = signal.Notify
+	setupSignalNotify      = ossignal.Notify
 	waitForSignalFunc      = func(quit <-chan os.Signal) { <-quit }
 	startHTTPServerFunc    = func(srv *http.Server) error { return srv.ListenAndServe() }
 	shutdownHTTPServerFunc = func(srv *http.Server, ctx context.Context) error { return srv.Shutdown(ctx) }
@@ -86,27 +92,35 @@ func main() {
 
 	// Create repository and run migrations
 	candleRepo := newCandleRepoFunc(db.Pool, tracer)
+	signalRepo := newSignalRepoFunc(db.Pool, tracer)
 	if db.Pool != nil {
 		if err := candleRepo.RunMigrations(ctx); err != nil {
 			log.Fatalf("failed to run migrations: %v", err)
 		}
+		if err := signalRepo.RunMigrations(ctx); err != nil {
+			log.Fatalf("failed to run signal migrations: %v", err)
+		}
 	}
 
-	// Create provider and price service
+	// Create providers and services
 	cgProvider := newCoinGeckoProviderFunc(tracer)
 	priceService := newPriceServiceFunc(tracer, cgProvider, candleRepo, cache.Client)
+	signalEngine := newSignalEngineFunc(nil)
+	signalService := newSignalServiceFunc(tracer, candleRepo, signalRepo, signalEngine)
 
-	// Start price poller (background goroutines, stopped by ctx cancel)
+	// Start background pollers (stopped by ctx cancel)
 	poller := newPricePollerFunc(tracer, priceService, cfg.CoinGeckoPollSecs)
 	startPollerFunc(poller, ctx)
+	signalPoller := newSignalPollerFunc(tracer, signalService)
+	startSignalPollerFunc(signalPoller, ctx)
 
 	// Start Telegram bot
 	os.Setenv("TELEGRAM_BOT_TOKEN", cfg.TelegramBotToken)
-	startTelegramBotFunc(priceService)
+	startTelegramBotFunc(priceService, signalService)
 
 	// Create handlers and routes
 	workService := newWorkServiceFunc(tracer)
-	h := newHandlerFunc(tracer, workService, priceService)
+	h := newHandlerFunc(tracer, workService, priceService, signalService)
 
 	r := newRouterFunc()
 	r.Use(otelgin.Middleware("bug-free-umbrella"))

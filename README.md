@@ -35,7 +35,8 @@ internal/handler/      HTTP handlers with Swagger annotations
 internal/job/          Background polling jobs (price poller)
 internal/provider/     External API clients (CoinGecko) and rate limiter
 internal/repository/   Postgres persistence (candle repository, migrations)
-internal/service/      Business logic (price service, work service)
+internal/signal/       Pure technical-analysis signal engine (RSI/MACD/Bollinger/Volume)
+internal/service/      Business logic (price service, signal service, work service)
 pkg/tracing/           OpenTelemetry initialization
 docs/                  Generated Swagger spec (do not edit manually)
 ```
@@ -93,6 +94,7 @@ COINGECKO_POLL_SECS=60
 | GET    | /api/prices           | Current prices for all 10 tracked assets       |
 | GET    | /api/prices/:symbol   | Current price for a specific asset (e.g. BTC)  |
 | GET    | /api/candles/:symbol  | OHLCV candles (`?interval=1h&limit=100`)       |
+| GET    | /api/signals          | Technical signals (`?symbol=BTC&risk=3&limit=50`) |
 
 Supported candle intervals: `5m`, `15m`, `1h`, `4h`, `1d`. Default limit is 100 (max 500).
 
@@ -105,6 +107,8 @@ Set `TELEGRAM_BOT_TOKEN` in your `.env` file to enable the bot.
 | /ping           | Health check — replies `pong`            |
 | /price BTC      | Current price, 24h change, 24h volume    |
 | /volume SOL     | 24h trading volume, price, 24h change    |
+| /signals BTC    | Latest generated signals for an asset     |
+| /signals --risk 3 | Latest signals filtered by risk level   |
 
 Supported symbols: BTC, ETH, SOL, XRP, ADA, DOGE, DOT, AVAX, LINK, MATIC.
 
@@ -117,6 +121,13 @@ The app runs a 3-tier background poller against the CoinGecko free API (~1.5 cal
 | 1    | Current prices (all 10)   | Every 60s  |
 | 2    | Short candles (5m/15m/1h) | Every 5min |
 | 3    | Long candles (4h/1d)      | Every 30min|
+
+Signal generation runs in a separate poller:
+
+| Tier | What                            | Frequency  |
+|------|---------------------------------|------------|
+| 1    | Short-interval signals (5m/15m/1h) | Every 5min |
+| 2    | Long-interval signals (4h/1d)       | Every 30min|
 
 Polling interval is configurable via `COINGECKO_POLL_SECS` (default 60).
 

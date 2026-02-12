@@ -8,16 +8,23 @@ import (
 )
 
 type Handler struct {
-	tracer       trace.Tracer
-	workService  *service.WorkService
-	priceService *service.PriceService
+	tracer        trace.Tracer
+	workService   *service.WorkService
+	priceService  *service.PriceService
+	signalService *service.SignalService
 }
 
-func New(tracer trace.Tracer, workService *service.WorkService, priceService *service.PriceService) *Handler {
+func New(
+	tracer trace.Tracer,
+	workService *service.WorkService,
+	priceService *service.PriceService,
+	signalService *service.SignalService,
+) *Handler {
 	return &Handler{
-		tracer:       tracer,
-		workService:  workService,
-		priceService: priceService,
+		tracer:        tracer,
+		workService:   workService,
+		priceService:  priceService,
+		signalService: signalService,
 	}
 }
 
@@ -26,4 +33,5 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/api/prices", h.GetAllPrices)
 	r.GET("/api/prices/:symbol", h.GetPrice)
 	r.GET("/api/candles/:symbol", h.GetCandles)
+	r.GET("/api/signals", h.GetSignals)
 }

@@ -2,19 +2,28 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"bug-free-umbrella/internal/domain"
-	"bug-free-umbrella/internal/service"
 
 	tele "gopkg.in/telebot.v3"
 )
 
-func StartTelegramBot(priceService *service.PriceService) {
+type PriceQuerier interface {
+	GetCurrentPrice(ctx context.Context, symbol string) (*domain.PriceSnapshot, error)
+}
+
+type SignalLister interface {
+	ListSignals(ctx context.Context, filter domain.SignalFilter) ([]domain.Signal, error)
+}
+
+func StartTelegramBot(priceService PriceQuerier, signalService SignalLister) {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		log.Println("TELEGRAM_BOT_TOKEN not set, skipping Telegram bot startup")
@@ -73,6 +82,99 @@ func StartTelegramBot(priceService *service.PriceService) {
 		return c.Send(msg)
 	})
 
+	b.Handle("/signals", func(c tele.Context) error {
+		if signalService == nil {
+			return c.Send("Signal service unavailable")
+		}
+
+		filter, err := parseSignalArgs(c.Args())
+		if err != nil {
+			return c.Send("Usage: /signals BTC | /signals --risk 3 | /signals BTC --risk 3")
+		}
+
+		signals, err := signalService.ListSignals(context.Background(), filter)
+		if err != nil {
+			return c.Send(fmt.Sprintf("Error fetching signals: %v", err))
+		}
+		if len(signals) == 0 {
+			return c.Send("No matching signals right now.")
+		}
+
+		lines := make([]string, 0, len(signals)+1)
+		lines = append(lines, "Latest signals:")
+		for _, s := range signals {
+			lines = append(lines, formatSignal(s))
+		}
+		return c.Send(strings.Join(lines, "\n"))
+	})
+
 	log.Println("Telegram bot started")
 	go b.Start()
+}
+
+func parseSignalArgs(args []string) (domain.SignalFilter, error) {
+	filter := domain.SignalFilter{Limit: 5}
+
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--risk=") {
+			level, err := strconv.Atoi(strings.TrimPrefix(arg, "--risk="))
+			if err != nil {
+				return domain.SignalFilter{}, err
+			}
+			risk := domain.RiskLevel(level)
+			if !risk.IsValid() {
+				return domain.SignalFilter{}, errors.New("risk out of range")
+			}
+			filter.Risk = &risk
+			continue
+		}
+
+		if arg == "--risk" {
+			if i+1 >= len(args) {
+				return domain.SignalFilter{}, errors.New("missing risk value")
+			}
+			i++
+			level, err := strconv.Atoi(args[i])
+			if err != nil {
+				return domain.SignalFilter{}, err
+			}
+			risk := domain.RiskLevel(level)
+			if !risk.IsValid() {
+				return domain.SignalFilter{}, errors.New("risk out of range")
+			}
+			filter.Risk = &risk
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--") {
+			return domain.SignalFilter{}, errors.New("unknown option")
+		}
+		if filter.Symbol != "" {
+			return domain.SignalFilter{}, errors.New("multiple symbols provided")
+		}
+		symbol := strings.ToUpper(arg)
+		if _, ok := domain.CoinGeckoID[symbol]; !ok {
+			return domain.SignalFilter{}, errors.New("unsupported symbol")
+		}
+		filter.Symbol = symbol
+	}
+
+	return filter, nil
+}
+
+func formatSignal(s domain.Signal) string {
+	return fmt.Sprintf(
+		"%s %s %s %s risk %d at %s",
+		s.Symbol,
+		s.Interval,
+		strings.ToUpper(s.Indicator),
+		strings.ToUpper(string(s.Direction)),
+		s.Risk,
+		s.Timestamp.UTC().Format(time.RFC822),
+	)
 }

@@ -196,6 +196,23 @@ func (s *stubRepo) UpsertCandles(ctx context.Context, candles []*domain.Candle) 
 	return nil
 }
 
+type stubSignalStore struct {
+	signals []domain.Signal
+}
+
+func (s *stubSignalStore) InsertSignals(ctx context.Context, signals []domain.Signal) error {
+	s.signals = append(s.signals, signals...)
+	return nil
+}
+
+func (s *stubSignalStore) ListSignals(ctx context.Context, filter domain.SignalFilter) ([]domain.Signal, error) {
+	return append([]domain.Signal(nil), s.signals...), nil
+}
+
+type stubSignalEngine struct{}
+
+func (stubSignalEngine) Generate(candles []*domain.Candle) []domain.Signal { return nil }
+
 var errFetch = errors.New("fetch error")
 
 func newTestHandler(prices map[string]*domain.PriceSnapshot, fetchErr error, repo service.CandleRepository) *Handler {
@@ -205,9 +222,11 @@ func newTestHandler(prices map[string]*domain.PriceSnapshot, fetchErr error, rep
 		repo = &stubRepo{}
 	}
 	priceService := service.NewPriceService(tracer, provider, repo, nil)
+	signalService := service.NewSignalService(tracer, repo, &stubSignalStore{}, stubSignalEngine{})
 	return &Handler{
-		tracer:       tracer,
-		workService:  service.NewWorkService(tracer),
-		priceService: priceService,
+		tracer:        tracer,
+		workService:   service.NewWorkService(tracer),
+		priceService:  priceService,
+		signalService: signalService,
 	}
 }

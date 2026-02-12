@@ -2,6 +2,7 @@ package domain
 
 import (
 	"testing"
+	"time"
 )
 
 func TestRiskLevelConstants(t *testing.T) {
@@ -18,23 +19,33 @@ func TestAssetFields(t *testing.T) {
 }
 
 func TestSignalFields(t *testing.T) {
-	a := Asset{Symbol: "ETH", Name: "Ethereum"}
+	ts := time.Unix(1234567890, 0).UTC()
 	s := Signal{
-		Asset:     a,
-		Indicator: "RSI",
-		Timestamp: 1234567890,
+		Symbol:    "ETH",
+		Interval:  "4h",
+		Indicator: IndicatorRSI,
+		Timestamp: ts,
 		Risk:      RiskLevel3,
-		Direction: "long",
+		Direction: DirectionLong,
 	}
-	if s.Asset.Symbol != "ETH" || s.Indicator != "RSI" || s.Risk != RiskLevel3 || s.Direction != "long" {
+	if s.Symbol != "ETH" || s.Interval != "4h" || s.Indicator != IndicatorRSI || !s.Timestamp.Equal(ts) || s.Risk != RiskLevel3 || s.Direction != DirectionLong {
 		t.Errorf("Signal fields not set correctly: %+v", s)
 	}
 }
 
 func TestRecommendationFields(t *testing.T) {
-	s := Signal{Asset: Asset{Symbol: "SOL"}, Indicator: "MACD"}
+	s := Signal{Symbol: "SOL", Indicator: IndicatorMACD}
 	r := Recommendation{Signal: s, Text: "Buy"}
-	if r.Signal.Indicator != "MACD" || r.Text != "Buy" {
+	if r.Signal.Indicator != IndicatorMACD || r.Text != "Buy" {
 		t.Errorf("Recommendation fields not set correctly: %+v", r)
+	}
+}
+
+func TestRiskLevelIsValid(t *testing.T) {
+	if !RiskLevel1.IsValid() || !RiskLevel5.IsValid() {
+		t.Fatal("expected boundary values to be valid")
+	}
+	if RiskLevel(0).IsValid() || RiskLevel(6).IsValid() {
+		t.Fatal("expected out-of-range risk levels to be invalid")
 	}
 }
