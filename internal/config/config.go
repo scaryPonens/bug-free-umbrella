@@ -63,6 +63,11 @@ type Config struct {
 	OnChainETHBlockscoutBaseURL string
 	OnChainADAKoiosBaseURL      string
 	OnChainXRPAPIBaseURL        string
+
+	SSHEnabled     bool
+	SSHPort        int
+	SSHHostKeyPath string
+	SSHIdleTimeout int
 }
 
 func Load() *Config {
@@ -358,6 +363,27 @@ func Load() *Config {
 	cfg.OnChainXRPAPIBaseURL = strings.TrimSpace(os.Getenv("ONCHAIN_XRP_API_BASE_URL"))
 	if cfg.OnChainXRPAPIBaseURL == "" {
 		cfg.OnChainXRPAPIBaseURL = "https://api.xrpscan.com"
+	}
+
+	cfg.SSHEnabled = strings.EqualFold(strings.TrimSpace(os.Getenv("SSH_ENABLED")), "true")
+
+	cfg.SSHPort = 2222
+	if v := strings.TrimSpace(os.Getenv("SSH_PORT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.SSHPort = n
+		}
+	}
+
+	cfg.SSHHostKeyPath = strings.TrimSpace(os.Getenv("SSH_HOST_KEY_PATH"))
+	if cfg.SSHHostKeyPath == "" {
+		cfg.SSHHostKeyPath = ".ssh/id_ed25519"
+	}
+
+	cfg.SSHIdleTimeout = 300
+	if v := strings.TrimSpace(os.Getenv("SSH_IDLE_TIMEOUT_SECS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.SSHIdleTimeout = n
+		}
 	}
 
 	return cfg

@@ -59,6 +59,33 @@ services:
     networks:
       - tracing
 
+  ssh:
+    build: .
+    command: ["./sshserver"]
+    ports:
+      - "2222:2222"
+    environment:
+      - SSH_ENABLED=true
+      - SSH_PORT=2222
+      - SSH_HOST_KEY_PATH=/root/.ssh/id_ed25519
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/postgres?sslmode=disable
+      - REDIS_URL=redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - ADVISOR_MAX_HISTORY=20
+    volumes:
+      - ssh-host-key:/root/.ssh
+    depends_on:
+      - db
+      - redis
+      - otel-collector
+    networks:
+      - tracing
+
+volumes:
+  ssh-host-key:
+
 networks:
   tracing:
     driver: bridge
