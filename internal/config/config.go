@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bug-free-umbrella/internal/domain"
 	"log"
 	"os"
 	"strconv"
@@ -27,6 +28,7 @@ type Config struct {
 
 	MLEnabled         bool
 	MLInterval        string
+	MLIntervals       []string
 	MLTargetHours     int
 	MLTrainWindowDays int
 	MLInferPollSecs   int
@@ -35,6 +37,12 @@ type Config struct {
 	MLLongThreshold   float64
 	MLShortThreshold  float64
 	MLMinTrainSamples int
+
+	MLEnableIForest  bool
+	MLAnomalyThresh  float64
+	MLAnomalyDampMax float64
+	MLIForestTrees   int
+	MLIForestSample  int
 }
 
 func Load() *Config {
@@ -123,6 +131,7 @@ func Load() *Config {
 	if cfg.MLInterval == "" {
 		cfg.MLInterval = "1h"
 	}
+	cfg.MLIntervals = parseMLIntervals(strings.TrimSpace(os.Getenv("ML_INTERVALS")), cfg.MLInterval)
 
 	cfg.MLTargetHours = 4
 	if v := strings.TrimSpace(os.Getenv("ML_TARGET_HOURS")); v != "" {
@@ -180,5 +189,78 @@ func Load() *Config {
 		}
 	}
 
+	cfg.MLEnableIForest = true
+	if v := strings.TrimSpace(os.Getenv("ML_ENABLE_IFOREST")); v != "" {
+		if strings.EqualFold(v, "true") {
+			cfg.MLEnableIForest = true
+		} else if strings.EqualFold(v, "false") {
+			cfg.MLEnableIForest = false
+		}
+	}
+
+	cfg.MLAnomalyThresh = 0.62
+	if v := strings.TrimSpace(os.Getenv("ML_ANOMALY_THRESHOLD")); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 && n < 1 {
+			cfg.MLAnomalyThresh = n
+		}
+	}
+
+	cfg.MLAnomalyDampMax = 0.65
+	if v := strings.TrimSpace(os.Getenv("ML_ANOMALY_DAMP_MAX")); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n >= 0 && n <= 1 {
+			cfg.MLAnomalyDampMax = n
+		}
+	}
+
+	cfg.MLIForestTrees = 200
+	if v := strings.TrimSpace(os.Getenv("ML_IFOREST_TREES")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MLIForestTrees = n
+		}
+	}
+
+	cfg.MLIForestSample = 256
+	if v := strings.TrimSpace(os.Getenv("ML_IFOREST_SAMPLE_SIZE")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MLIForestSample = n
+		}
+	}
+
 	return cfg
+}
+
+func parseMLIntervals(raw string, fallback string) []string {
+	if fallback == "" {
+		fallback = "1h"
+	}
+	if strings.TrimSpace(raw) == "" {
+		return []string{fallback}
+	}
+
+	supported := make(map[string]struct{}, len(domain.SupportedIntervals))
+	for _, interval := range domain.SupportedIntervals {
+		supported[interval] = struct{}{}
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		interval := strings.TrimSpace(part)
+		if interval == "" {
+			continue
+		}
+		if _, ok := supported[interval]; !ok {
+			continue
+		}
+		if _, ok := seen[interval]; ok {
+			continue
+		}
+		seen[interval] = struct{}{}
+		out = append(out, interval)
+	}
+	if len(out) == 0 {
+		return []string{fallback}
+	}
+	return out
 }

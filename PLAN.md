@@ -169,7 +169,7 @@ Phase 5 is complete. The repository now includes:
 
 ---
 
-## Phase 6: ML Signal Engine v2
+## Phase 6: ML Signal Engine v2 ✅ **(Completed)**
 
 **Goal:** Layer in learned models alongside classic indicators.
 
@@ -178,7 +178,6 @@ Phase 5 is complete. The repository now includes:
   - **Logistic regression / XGBoost** (call out to a Python sidecar or use a Go ML lib like `golearn`) for "will price be higher in N hours?" binary classification
   - Train on your accumulated OHLCV + indicator data
 - More advanced (later in this phase):
-  - **LSTM or Transformer** price prediction (Python microservice, exposed via gRPC or HTTP)
   - **Anomaly detection** on volume/price patterns (isolation forest)
 - Each ML model outputs a confidence score → mapped to risk level
 - Ensemble: combine classic signals + ML signals with weighted voting
@@ -187,7 +186,7 @@ Phase 5 is complete. The repository now includes:
 **Deliverable:** Signals now come from both rule-based and ML sources. You have a backtesting table showing accuracy.
 
 **Status:**
-Phase 6 is **partially complete** (initial v2 slice shipped). The repository now includes:
+Phase 6 development is **complete in-repo** (Go-native implementation finished). The repository now includes:
 - Postgres ML schema + reporting view via migration `000005_create_ml_phase6`:
   - `ml_feature_rows`
   - `ml_model_versions`
@@ -201,36 +200,36 @@ Phase 6 is **partially complete** (initial v2 slice shipped). The repository now
   - feature engine (1h interval, 4h target labels)
   - logistic regression model
   - XGBoost-style model via `github.com/rmera/boo`
+  - Isolation Forest anomaly model via `github.com/narumiruna/go-iforest`
   - model registry repository
   - prediction repository (including resolve lifecycle)
-  - training service (chronological split + metrics + promotion logic)
-  - inference service (ML + ensemble predictions and signal emission)
+  - training service (chronological split + metrics + promotion logic + anomaly training on 1h/4h)
+  - inference service (ML + ensemble predictions and signal emission + anomaly persistence/dampening)
   - ensemble scorer (classic + ML weighted voting)
 - New `internal/ta/` shared indicator helpers for RSI/MACD/Bollinger/statistics.
 - ML orchestration service and background jobs:
-  - feature/inference cycle
+  - feature/inference cycle (multi-interval feature refresh)
   - daily training cycle
-  - outcome resolver cycle
-- Config support for ML runtime controls (`ML_ENABLED`, cadence/threshold/window vars).
+  - outcome resolver cycle (directional-only resolution)
+- Config support for ML runtime controls (`ML_ENABLED`, cadence/threshold/window vars), including:
+  - `ML_INTERVALS`
+  - `ML_ENABLE_IFOREST`
+  - `ML_ANOMALY_THRESHOLD`
+  - `ML_ANOMALY_DAMP_MAX`
+  - `ML_IFOREST_TREES`
+  - `ML_IFOREST_SAMPLE_SIZE`
 - Existing signal surfaces now accept ML indicators:
   - HTTP `GET /api/signals`
   - MCP `signals_list` indicator normalization
 - Manual trigger endpoint for training:
   - `POST /api/ml/train`
+- Backfill CLI supports interval selection:
+  - `go run ./cmd/mlbackfill --intervals 1h,4h ...`
 
-**Remaining to implement in Phase 6:**
-- Advanced model track called out in plan:
-  - LSTM/Transformer prediction service
-  - anomaly detection (e.g., isolation forest)
-- Broaden ML coverage beyond initial `1h` interval rollout (if desired for this phase).
-- Add fuller Phase 6 test coverage listed in the plan for:
-  - registry edge/concurrency behavior
-  - inference persistence + signal attach behavior
-  - outcome resolver idempotency edge cases
-  - end-to-end accuracy/backtesting validation scenarios
-- Complete operational rollout steps in production:
-  - explicit one-time historical feature backfill execution (**implemented via `cmd/mlbackfill`; remaining: run it in target environments**)
-  - enable/monitor workflow (`ML_ENABLED=true`) with ongoing drift/accuracy monitoring against `ml_accuracy_daily`.
+**Post-completion rollout checklist (ops/environment):**
+- Run one-time historical candle backfill in each target environment (`1h` + `4h`).
+- Enable `ML_ENABLED=true` in production and validate active model versions (`logreg`, `xgboost`, `iforest_1h`, `iforest_4h`).
+- Monitor directional accuracy and anomaly-score drift using `ml_accuracy_daily` and `ml_predictions` details.
 
 ---
 

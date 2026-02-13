@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	defaultDays      = 90
-	backfillInterval = "1h"
+	defaultDays = 90
 )
 
 var (
@@ -30,8 +29,9 @@ var (
 )
 
 type options struct {
-	days    int
-	symbols []string
+	days      int
+	symbols   []string
+	intervals []string
 }
 
 func main() {
@@ -64,11 +64,16 @@ func main() {
 	candleRepo := repository.NewCandleRepository(pool, tracer)
 	cgProvider := provider.NewCoinGeckoProvider(tracer)
 
-	log.Printf("starting 1h candle backfill: days=%d symbols=%s", opts.days, strings.Join(opts.symbols, ","))
+	log.Printf(
+		"starting candle backfill: days=%d symbols=%s intervals=%s",
+		opts.days,
+		strings.Join(opts.symbols, ","),
+		strings.Join(opts.intervals, ","),
+	)
 
 	totalUpserted := 0
 	for _, symbol := range opts.symbols {
-		candles, err := cgProvider.FetchMarketChart(ctx, symbol, opts.days, []string{backfillInterval})
+		candles, err := cgProvider.FetchMarketChart(ctx, symbol, opts.days, opts.intervals)
 		if err != nil {
 			log.Fatalf("fetch market chart for %s: %v", symbol, err)
 		}
@@ -83,7 +88,13 @@ func main() {
 		log.Printf("backfilled %s: %d candles", symbol, len(candles))
 	}
 
-	log.Printf("backfill complete: symbols=%d total_candles=%d interval=%s days=%d", len(opts.symbols), totalUpserted, backfillInterval, opts.days)
+	log.Printf(
+		"backfill complete: symbols=%d total_candles=%d intervals=%s days=%d",
+		len(opts.symbols),
+		totalUpserted,
+		strings.Join(opts.intervals, ","),
+		opts.days,
+	)
 }
 
 func parseOptions(args []string, getenv func(string) string) (options, error) {
@@ -91,8 +102,10 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	fs.SetOutput(os.Stderr)
 
 	daysDefault := defaultBackfillDays(getenv)
+	intervalsDefault := defaultBackfillIntervals(getenv)
 	days := fs.Int("days", daysDefault, "number of historical days to backfill (default from ML_BACKFILL_DAYS, then ML_TRAIN_WINDOW_DAYS, else 90)")
 	symbolsRaw := fs.String("symbols", strings.Join(domain.SupportedSymbols, ","), "comma-separated symbols to backfill")
+	intervalsRaw := fs.String("intervals", strings.Join(intervalsDefault, ","), "comma-separated candle intervals to backfill")
 
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
@@ -105,10 +118,15 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	if err != nil {
 		return options{}, err
 	}
+	intervals, err := normalizeIntervals(*intervalsRaw)
+	if err != nil {
+		return options{}, err
+	}
 
 	return options{
-		days:    *days,
-		symbols: symbols,
+		days:      *days,
+		symbols:   symbols,
+		intervals: intervals,
 	}, nil
 }
 
@@ -124,6 +142,24 @@ func defaultBackfillDays(getenv func(string) string) int {
 		}
 	}
 	return defaultDays
+}
+
+func defaultBackfillIntervals(getenv func(string) string) []string {
+	candidates := []string{
+		strings.TrimSpace(getenv("ML_INTERVALS")),
+		strings.TrimSpace(getenv("ML_INTERVAL")),
+		"1h",
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		intervals, err := normalizeIntervals(candidate)
+		if err == nil && len(intervals) > 0 {
+			return intervals
+		}
+	}
+	return []string{"1h"}
 }
 
 func normalizeSymbols(raw string) ([]string, error) {
@@ -149,6 +185,37 @@ func normalizeSymbols(raw string) ([]string, error) {
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("symbols cannot be empty")
+	}
+	return out, nil
+}
+
+func normalizeIntervals(raw string) ([]string, error) {
+	parts := strings.Split(raw, ",")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("intervals cannot be empty")
+	}
+	allowed := make(map[string]struct{}, len(domain.SupportedIntervals))
+	for _, interval := range domain.SupportedIntervals {
+		allowed[interval] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(parts))
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		interval := strings.TrimSpace(part)
+		if interval == "" {
+			continue
+		}
+		if _, ok := allowed[interval]; !ok {
+			return nil, fmt.Errorf("unsupported interval: %s", interval)
+		}
+		if _, exists := seen[interval]; exists {
+			continue
+		}
+		seen[interval] = struct{}{}
+		out = append(out, interval)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("intervals cannot be empty")
 	}
 	return out, nil
 }

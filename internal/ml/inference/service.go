@@ -10,6 +10,7 @@ import (
 	"bug-free-umbrella/internal/domain"
 	"bug-free-umbrella/internal/ml/common"
 	"bug-free-umbrella/internal/ml/ensemble"
+	iforestmodel "bug-free-umbrella/internal/ml/models/iforest"
 	"bug-free-umbrella/internal/ml/models/logreg"
 	"bug-free-umbrella/internal/ml/models/xgboost"
 
@@ -35,10 +36,14 @@ type SignalStore interface {
 }
 
 type Config struct {
-	Interval       string
-	TargetHours    int
-	LongThreshold  float64
-	ShortThreshold float64
+	Interval         string
+	Intervals        []string
+	TargetHours      int
+	LongThreshold    float64
+	ShortThreshold   float64
+	EnableIForest    bool
+	AnomalyThreshold float64
+	AnomalyDampMax   float64
 }
 
 type Service struct {
@@ -68,6 +73,9 @@ func NewService(
 	if cfg.Interval == "" {
 		cfg.Interval = "1h"
 	}
+	if len(cfg.Intervals) == 0 {
+		cfg.Intervals = []string{cfg.Interval}
+	}
 	if cfg.TargetHours <= 0 {
 		cfg.TargetHours = 4
 	}
@@ -76,6 +84,12 @@ func NewService(
 	}
 	if cfg.ShortThreshold <= 0 || cfg.ShortThreshold >= 1 {
 		cfg.ShortThreshold = 0.45
+	}
+	if cfg.AnomalyThreshold <= 0 || cfg.AnomalyThreshold >= 1 {
+		cfg.AnomalyThreshold = 0.62
+	}
+	if cfg.AnomalyDampMax < 0 || cfg.AnomalyDampMax > 1 {
+		cfg.AnomalyDampMax = 0.65
 	}
 	if ensembleSvc == nil {
 		ensembleSvc = ensemble.NewService()
@@ -107,77 +121,105 @@ func (s *Service) RunLatest(ctx context.Context, now time.Time) (RunResult, erro
 	if err != nil {
 		return RunResult{}, err
 	}
-	if logPredict == nil && xgbPredict == nil {
-		return RunResult{}, nil
-	}
 
-	rows, err := s.features.ListLatestByInterval(ctx, s.cfg.Interval)
-	if err != nil {
-		return RunResult{}, err
-	}
 	result := RunResult{}
-	for i := range rows {
-		row := rows[i]
-		targetTime := row.OpenTime.UTC().Add(time.Duration(s.cfg.TargetHours) * time.Hour)
-		features := common.FeatureVector(row)
-
-		classicScore := s.classicScore(ctx, row)
-		logProb := 0.5
-		xgbProb := 0.5
-
-		if logPredict != nil {
-			logProb = common.Clamp01(logPredict(features))
-			pred, hasSignal, err := s.persistModelPrediction(ctx, row, common.ModelKeyLogReg, logVersion, logProb, targetTime, 0)
-			if err != nil {
-				return result, err
-			}
-			if pred != nil {
-				result.Predictions++
-			}
-			if hasSignal {
-				result.Signals++
-			}
-		}
-
-		if xgbPredict != nil {
-			xgbProb = common.Clamp01(xgbPredict(features))
-			pred, hasSignal, err := s.persistModelPrediction(ctx, row, common.ModelKeyXGBoost, xgbVersion, xgbProb, targetTime, 0)
-			if err != nil {
-				return result, err
-			}
-			if pred != nil {
-				result.Predictions++
-			}
-			if hasSignal {
-				result.Signals++
-			}
-		}
-
-		ensembleScore := s.ensemble.Score(ensemble.Components{
-			ClassicScore: classicScore,
-			LogRegProb:   logProb,
-			XGBoostProb:  xgbProb,
-		})
-		if ensembleScore > 1 {
-			ensembleScore = 1
-		}
-		if ensembleScore < -1 {
-			ensembleScore = -1
-		}
-		ensembleProb := common.Clamp01((ensembleScore + 1) / 2)
-		version := max(logVersion, xgbVersion)
-		if version <= 0 {
-			version = 1
-		}
-		pred, hasSignal, err := s.persistModelPrediction(ctx, row, common.ModelKeyEnsembleV1, version, ensembleProb, targetTime, ensembleScore)
+	intervals := uniqueIntervals(s.cfg.Intervals, s.cfg.Interval)
+	for _, interval := range intervals {
+		rows, err := s.features.ListLatestByInterval(ctx, interval)
 		if err != nil {
 			return result, err
 		}
-		if pred != nil {
-			result.Predictions++
+		if len(rows) == 0 {
+			continue
 		}
-		if hasSignal {
-			result.Signals++
+
+		iforestVersion, iforestPredict, err := s.loadIForest(ctx, interval)
+		if err != nil {
+			return result, err
+		}
+
+		for i := range rows {
+			row := rows[i]
+			targetTime := row.OpenTime.UTC().Add(time.Duration(s.cfg.TargetHours) * time.Hour)
+			features := common.FeatureVector(row)
+			anomalyScore := 0.0
+			dampFactor := 1.0
+
+			if iforestPredict != nil {
+				anomalyScore = common.Clamp01(iforestPredict(features))
+				dampFactor = s.dampFactor(anomalyScore)
+				pred, err := s.persistAnomalyPrediction(ctx, row, iforestVersion, anomalyScore, targetTime, dampFactor)
+				if err != nil {
+					return result, err
+				}
+				if pred != nil {
+					result.Predictions++
+				}
+			}
+
+			if row.Interval != s.cfg.Interval || (logPredict == nil && xgbPredict == nil) {
+				continue
+			}
+
+			classicScore := s.classicScore(ctx, row)
+			logProb := 0.5
+			xgbProb := 0.5
+
+			if logPredict != nil {
+				logProb = common.Clamp01(logPredict(features))
+				pred, hasSignal, err := s.persistModelPrediction(ctx, row, common.ModelKeyLogReg, logVersion, logProb, targetTime, 0, anomalyScore, dampFactor)
+				if err != nil {
+					return result, err
+				}
+				if pred != nil {
+					result.Predictions++
+				}
+				if hasSignal {
+					result.Signals++
+				}
+			}
+
+			if xgbPredict != nil {
+				xgbProb = common.Clamp01(xgbPredict(features))
+				pred, hasSignal, err := s.persistModelPrediction(ctx, row, common.ModelKeyXGBoost, xgbVersion, xgbProb, targetTime, 0, anomalyScore, dampFactor)
+				if err != nil {
+					return result, err
+				}
+				if pred != nil {
+					result.Predictions++
+				}
+				if hasSignal {
+					result.Signals++
+				}
+			}
+
+			ensembleScore := s.ensemble.Score(ensemble.Components{
+				ClassicScore: classicScore,
+				LogRegProb:   logProb,
+				XGBoostProb:  xgbProb,
+			})
+			ensembleScore *= dampFactor
+			if ensembleScore > 1 {
+				ensembleScore = 1
+			}
+			if ensembleScore < -1 {
+				ensembleScore = -1
+			}
+			ensembleProb := common.Clamp01((ensembleScore + 1) / 2)
+			version := max(logVersion, xgbVersion)
+			if version <= 0 {
+				version = 1
+			}
+			pred, hasSignal, err := s.persistModelPrediction(ctx, row, common.ModelKeyEnsembleV1, version, ensembleProb, targetTime, ensembleScore, anomalyScore, dampFactor)
+			if err != nil {
+				return result, err
+			}
+			if pred != nil {
+				result.Predictions++
+			}
+			if hasSignal {
+				result.Signals++
+			}
 		}
 	}
 
@@ -192,6 +234,8 @@ func (s *Service) persistModelPrediction(
 	probUp float64,
 	targetTime time.Time,
 	ensembleScore float64,
+	anomalyScore float64,
+	dampFactor float64,
 ) (*domain.MLPrediction, bool, error) {
 	confidence := common.Confidence(probUp)
 	direction := common.DirectionFromProb(probUp, s.cfg.LongThreshold, s.cfg.ShortThreshold)
@@ -199,7 +243,10 @@ func (s *Service) persistModelPrediction(
 		direction = ensemble.Direction(ensembleScore)
 	}
 	risk := common.RiskFromConfidence(confidence)
-	detailsJSON := s.buildDetailsJSON(modelKey, modelVersion, probUp, confidence, ensembleScore)
+	if modelKey == common.ModelKeyEnsembleV1 && anomalyScore >= s.cfg.AnomalyThreshold {
+		risk = riskBump(risk, 1)
+	}
+	detailsJSON := s.buildDetailsJSON(modelKey, modelVersion, probUp, confidence, ensembleScore, anomalyScore, dampFactor)
 
 	pred, err := s.predictions.UpsertPrediction(ctx, domain.MLPrediction{
 		Symbol:       row.Symbol,
@@ -222,7 +269,7 @@ func (s *Service) persistModelPrediction(
 		return pred, false, nil
 	}
 	indicator := indicatorForModelKey(modelKey)
-	signalDetails := signalDetails(modelKey, modelVersion, probUp, confidence, ensembleScore)
+	signalDetails := signalDetails(modelKey, modelVersion, probUp, confidence, ensembleScore, anomalyScore, dampFactor)
 	persistedSignals, err := s.signals.InsertSignals(ctx, []domain.Signal{{
 		Symbol:    row.Symbol,
 		Interval:  row.Interval,
@@ -241,6 +288,32 @@ func (s *Service) persistModelPrediction(
 		}
 	}
 	return pred, true, nil
+}
+
+func (s *Service) persistAnomalyPrediction(
+	ctx context.Context,
+	row domain.MLFeatureRow,
+	modelVersion int,
+	anomalyScore float64,
+	targetTime time.Time,
+	dampFactor float64,
+) (*domain.MLPrediction, error) {
+	risk := riskFromAnomalyScore(anomalyScore)
+	detailsJSON := s.buildAnomalyDetailsJSON(row.Interval, modelVersion, anomalyScore, dampFactor)
+
+	return s.predictions.UpsertPrediction(ctx, domain.MLPrediction{
+		Symbol:       row.Symbol,
+		Interval:     row.Interval,
+		OpenTime:     row.OpenTime.UTC(),
+		TargetTime:   targetTime.UTC(),
+		ModelKey:     common.IForestModelKey(row.Interval),
+		ModelVersion: modelVersion,
+		ProbUp:       0.5,
+		Confidence:   anomalyScore,
+		Direction:    domain.DirectionHold,
+		Risk:         risk,
+		DetailsJSON:  detailsJSON,
+	})
 }
 
 func (s *Service) loadLogReg(ctx context.Context) (int, func([]float64) float64, error) {
@@ -265,6 +338,21 @@ func (s *Service) loadXGBoost(ctx context.Context) (int, func([]float64) float64
 		return 0, nil, err
 	}
 	return active.Version, model.PredictProb, nil
+}
+
+func (s *Service) loadIForest(ctx context.Context, interval string) (int, func([]float64) float64, error) {
+	if !s.cfg.EnableIForest {
+		return 0, nil, nil
+	}
+	active, err := s.registry.GetActiveModel(ctx, common.IForestModelKey(interval))
+	if err != nil || active == nil {
+		return 0, nil, err
+	}
+	model, err := iforestmodel.UnmarshalBinary(active.ArtifactBlob)
+	if err != nil {
+		return 0, nil, err
+	}
+	return active.Version, model.PredictScore, nil
 }
 
 func (s *Service) classicScore(ctx context.Context, row domain.MLFeatureRow) float64 {
@@ -312,7 +400,7 @@ func (s *Service) classicScore(ctx context.Context, row domain.MLFeatureRow) flo
 	return score
 }
 
-func (s *Service) buildDetailsJSON(modelKey string, version int, probUp, confidence, ensembleScore float64) string {
+func (s *Service) buildDetailsJSON(modelKey string, version int, probUp, confidence, ensembleScore, anomalyScore, dampFactor float64) string {
 	payload := map[string]any{
 		"model_key":     modelKey,
 		"model_version": version,
@@ -323,6 +411,10 @@ func (s *Service) buildDetailsJSON(modelKey string, version int, probUp, confide
 	if modelKey == common.ModelKeyEnsembleV1 {
 		payload["ensemble_score"] = roundFloat(ensembleScore)
 	}
+	if anomalyScore > 0 {
+		payload["anomaly_score"] = roundFloat(anomalyScore)
+		payload["damp_factor"] = roundFloat(dampFactor)
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return "{}"
@@ -330,8 +422,30 @@ func (s *Service) buildDetailsJSON(modelKey string, version int, probUp, confide
 	return string(b)
 }
 
-func signalDetails(modelKey string, version int, probUp, confidence, ensembleScore float64) string {
+func (s *Service) buildAnomalyDetailsJSON(interval string, version int, anomalyScore, dampFactor float64) string {
+	payload := map[string]any{
+		"model_key":     common.IForestModelKey(interval),
+		"model_version": version,
+		"anomaly_score": roundFloat(anomalyScore),
+		"threshold":     roundFloat(s.cfg.AnomalyThreshold),
+		"damp_factor":   roundFloat(dampFactor),
+		"target":        "4h",
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+func signalDetails(modelKey string, version int, probUp, confidence, ensembleScore, anomalyScore, dampFactor float64) string {
 	if modelKey == common.ModelKeyEnsembleV1 {
+		if anomalyScore > 0 {
+			return fmt.Sprintf(
+				"model_key=%s;model_version=%d;prob_up=%.4f;confidence=%.4f;target=4h;ensemble_score=%.4f;anomaly_score=%.4f;damp_factor=%.4f",
+				modelKey, version, probUp, confidence, ensembleScore, anomalyScore, dampFactor,
+			)
+		}
 		return fmt.Sprintf(
 			"model_key=%s;model_version=%d;prob_up=%.4f;confidence=%.4f;target=4h;ensemble_score=%.4f",
 			modelKey, version, probUp, confidence, ensembleScore,
@@ -361,6 +475,67 @@ func isClassicIndicator(indicator string) bool {
 	default:
 		return false
 	}
+}
+
+func (s *Service) dampFactor(anomalyScore float64) float64 {
+	factor := 1 - (s.cfg.AnomalyDampMax * common.Clamp01(anomalyScore))
+	if factor < 0 {
+		return 0
+	}
+	if factor > 1 {
+		return 1
+	}
+	return factor
+}
+
+func riskFromAnomalyScore(score float64) domain.RiskLevel {
+	score = common.Clamp01(score)
+	switch {
+	case score >= 0.9:
+		return domain.RiskLevel2
+	case score >= 0.75:
+		return domain.RiskLevel3
+	case score >= 0.6:
+		return domain.RiskLevel4
+	default:
+		return domain.RiskLevel5
+	}
+}
+
+func riskBump(risk domain.RiskLevel, delta int) domain.RiskLevel {
+	next := int(risk) + delta
+	if next > int(domain.RiskLevel5) {
+		return domain.RiskLevel5
+	}
+	if next < int(domain.RiskLevel1) {
+		return domain.RiskLevel1
+	}
+	return domain.RiskLevel(next)
+}
+
+func uniqueIntervals(intervals []string, fallback string) []string {
+	if fallback == "" {
+		fallback = "1h"
+	}
+	if len(intervals) == 0 {
+		return []string{fallback}
+	}
+	seen := make(map[string]struct{}, len(intervals))
+	out := make([]string, 0, len(intervals))
+	for _, interval := range intervals {
+		if interval == "" {
+			continue
+		}
+		if _, ok := seen[interval]; ok {
+			continue
+		}
+		seen[interval] = struct{}{}
+		out = append(out, interval)
+	}
+	if len(out) == 0 {
+		return []string{fallback}
+	}
+	return out
 }
 
 func roundFloat(v float64) float64 {

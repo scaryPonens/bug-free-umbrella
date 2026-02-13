@@ -148,9 +148,13 @@ func main() {
 			mlRegistryRepo := registry.NewRepository(db.Pool, tracer)
 			mlPredictionRepo := predictions.NewRepository(db.Pool, tracer)
 			mlTrainingSvc := training.NewService(tracer, mlFeatureRepo, mlRegistryRepo, training.Config{
-				Interval:        cfg.MLInterval,
-				TrainWindowDays: cfg.MLTrainWindowDays,
-				MinTrainSamples: cfg.MLMinTrainSamples,
+				Interval:          cfg.MLInterval,
+				Intervals:         cfg.MLIntervals,
+				TrainWindowDays:   cfg.MLTrainWindowDays,
+				MinTrainSamples:   cfg.MLMinTrainSamples,
+				EnableIForest:     cfg.MLEnableIForest,
+				IForestTrees:      cfg.MLIForestTrees,
+				IForestSampleSize: cfg.MLIForestSample,
 			})
 			mlInferenceSvc := inference.NewService(
 				tracer,
@@ -160,10 +164,14 @@ func main() {
 				signalRepo,
 				ensemble.NewService(),
 				inference.Config{
-					Interval:       cfg.MLInterval,
-					TargetHours:    cfg.MLTargetHours,
-					LongThreshold:  cfg.MLLongThreshold,
-					ShortThreshold: cfg.MLShortThreshold,
+					Interval:         cfg.MLInterval,
+					Intervals:        cfg.MLIntervals,
+					TargetHours:      cfg.MLTargetHours,
+					LongThreshold:    cfg.MLLongThreshold,
+					ShortThreshold:   cfg.MLShortThreshold,
+					EnableIForest:    cfg.MLEnableIForest,
+					AnomalyThreshold: cfg.MLAnomalyThresh,
+					AnomalyDampMax:   cfg.MLAnomalyDampMax,
 				},
 			)
 			mlService = service.NewMLSignalService(
@@ -176,6 +184,7 @@ func main() {
 				mlPredictionRepo,
 				service.MLSignalServiceConfig{
 					Interval:        cfg.MLInterval,
+					Intervals:       cfg.MLIntervals,
 					TargetHours:     cfg.MLTargetHours,
 					TrainWindowDays: cfg.MLTrainWindowDays,
 				},
@@ -193,8 +202,8 @@ func main() {
 				200,
 			).Start(ctx)
 			log.Printf(
-				"ML jobs enabled interval=%s target_hours=%d train_window_days=%d",
-				cfg.MLInterval, cfg.MLTargetHours, cfg.MLTrainWindowDays,
+				"ML jobs enabled intervals=%v directional_interval=%s target_hours=%d train_window_days=%d iforest=%v",
+				cfg.MLIntervals, cfg.MLInterval, cfg.MLTargetHours, cfg.MLTrainWindowDays, cfg.MLEnableIForest,
 			)
 		}
 	}

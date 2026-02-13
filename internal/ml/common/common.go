@@ -10,6 +10,7 @@ const (
 	ModelKeyLogReg     = "logreg"
 	ModelKeyXGBoost    = "xgboost"
 	ModelKeyEnsembleV1 = "ensemble_v1"
+	ModelKeyIForest    = "iforest"
 )
 
 var FeatureNames = []string{
@@ -95,4 +96,27 @@ func DirectionFromProb(probUp, longThreshold, shortThreshold float64) domain.Sig
 		return domain.DirectionShort
 	}
 	return domain.DirectionHold
+}
+
+func IForestModelKey(interval string) string {
+	interval = sanitizeInterval(interval)
+	return ModelKeyIForest + "_" + interval
+}
+
+func IsIForestModelKey(modelKey string) bool {
+	return len(modelKey) > len(ModelKeyIForest)+1 && modelKey[:len(ModelKeyIForest)+1] == ModelKeyIForest+"_"
+}
+
+func sanitizeInterval(interval string) string {
+	out := make([]byte, 0, len(interval))
+	for i := 0; i < len(interval); i++ {
+		ch := interval[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			out = append(out, ch)
+		}
+	}
+	if len(out) == 0 {
+		return "1h"
+	}
+	return string(out)
 }

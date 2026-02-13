@@ -21,6 +21,7 @@ require (
 
 require (
 	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/narumiruna/go-iforest v0.2.2 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

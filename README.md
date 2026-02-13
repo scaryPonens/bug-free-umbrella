@@ -257,9 +257,10 @@ Check current applied version:
 go run ./cmd/migrate version
 ```
 
-## ML Backfill (1h candles)
+## ML Backfill (1h/4h candles)
 
-Before enabling `ML_ENABLED=true`, backfill enough `1h` candle history for training.
+Before enabling `ML_ENABLED=true`, backfill enough candle history for training and anomaly scoring.
+Default behavior now follows `ML_INTERVALS` (fallback: `ML_INTERVAL`, then `1h`).
 
 Run one-shot backfill for all supported symbols:
 
@@ -267,15 +268,51 @@ Run one-shot backfill for all supported symbols:
 go run ./cmd/mlbackfill
 ```
 
-Override days and symbols:
+Override days, symbols, and intervals:
 
 ```sh
-go run ./cmd/mlbackfill --days 90 --symbols BTC,ETH,SOL
+go run ./cmd/mlbackfill --days 90 --symbols BTC,ETH,SOL --intervals 1h,4h
 ```
 
 Defaults:
 - `--days` defaults to `ML_BACKFILL_DAYS`, then `ML_TRAIN_WINDOW_DAYS`, then `90`
 - `--symbols` defaults to all `SupportedSymbols`
+- `--intervals` defaults to `ML_INTERVALS`, then `ML_INTERVAL`, then `1h`
+
+Isolation Forest anomaly detection:
+- Runs for configured ML intervals (for example `1h,4h`)
+- Persists anomaly predictions to `ml_predictions` with `model_key=iforest_<interval>`
+- Dampens ensemble conviction and can increase ensemble risk
+- Does **not** emit standalone anomaly signal rows
+
+## Ensemble Usage
+
+The ensemble is emitted as `indicator=ml_ensemble_up4h` and combines classic TA signals with ML probabilities.
+
+How it works:
+- Base score:
+  - `ensemble_base = 0.30*classic_score + 0.35*logreg_score + 0.35*xgboost_score`
+  - `logreg_score` and `xgboost_score` are mapped from probability with `2*prob_up - 1`
+  - `classic_score` is derived from same-timestamp classic signals (`long=+1`, `short=-1`, `hold=0`), weighted by `(6-risk)/5`
+- Anomaly dampening:
+  - `ensemble_score = ensemble_base * (1 - ML_ANOMALY_DAMP_MAX * anomaly_score)`
+  - `anomaly_score` comes from `iforest_<interval>` prediction (0 to 1)
+- Direction thresholds:
+  - `ensemble_score > 0.15` => `long`
+  - `ensemble_score < -0.15` => `short`
+  - otherwise `hold` (prediction row only; no signal row)
+- Risk:
+  - Derived from confidence `abs(prob_up - 0.5) * 2`
+  - If `anomaly_score >= ML_ANOMALY_THRESHOLD`, ensemble risk is bumped by `+1` (capped at 5)
+
+Practical usage:
+- Trigger/update models: `POST /api/ml/train`
+- Fetch ensemble signals:
+  - `GET /api/signals?indicator=ml_ensemble_up4h&limit=50`
+  - Optional filter by symbol: `GET /api/signals?symbol=BTC&indicator=ml_ensemble_up4h`
+- Read signal `details`:
+  - includes `model_key=ensemble_v1`, `prob_up`, `confidence`, `target=4h`, `ensemble_score`
+  - when anomaly is active, it also includes `anomaly_score` and `damp_factor`
 
 
 ## Regenerating Swagger Docs

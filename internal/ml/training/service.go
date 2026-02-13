@@ -12,6 +12,7 @@ import (
 	"bug-free-umbrella/internal/domain"
 	"bug-free-umbrella/internal/ml/common"
 	"bug-free-umbrella/internal/ml/features"
+	"bug-free-umbrella/internal/ml/models/iforest"
 	"bug-free-umbrella/internal/ml/models/logreg"
 	"bug-free-umbrella/internal/ml/models/xgboost"
 
@@ -20,6 +21,7 @@ import (
 
 type FeatureRowStore interface {
 	ListLabeledRows(ctx context.Context, interval string, from, to time.Time) ([]domain.MLFeatureRow, error)
+	ListRows(ctx context.Context, interval string, from, to time.Time) ([]domain.MLFeatureRow, error)
 }
 
 type ModelRegistry interface {
@@ -30,9 +32,13 @@ type ModelRegistry interface {
 }
 
 type Config struct {
-	Interval        string
-	TrainWindowDays int
-	MinTrainSamples int
+	Interval          string
+	Intervals         []string
+	TrainWindowDays   int
+	MinTrainSamples   int
+	EnableIForest     bool
+	IForestTrees      int
+	IForestSampleSize int
 }
 
 type Service struct {
@@ -44,6 +50,7 @@ type Service struct {
 
 type ModelTrainResult struct {
 	ModelKey     string
+	Interval     string
 	Version      int
 	SampleCount  int
 	TestCount    int
@@ -56,11 +63,20 @@ func NewService(tracer trace.Tracer, features FeatureRowStore, registry ModelReg
 	if cfg.Interval == "" {
 		cfg.Interval = "1h"
 	}
+	if len(cfg.Intervals) == 0 {
+		cfg.Intervals = []string{cfg.Interval}
+	}
 	if cfg.TrainWindowDays <= 0 {
 		cfg.TrainWindowDays = 90
 	}
 	if cfg.MinTrainSamples <= 0 {
 		cfg.MinTrainSamples = 1000
+	}
+	if cfg.IForestTrees <= 0 {
+		cfg.IForestTrees = iforest.DefaultTrainOptions().NumTrees
+	}
+	if cfg.IForestSampleSize <= 0 {
+		cfg.IForestSampleSize = iforest.DefaultTrainOptions().SampleSize
 	}
 	return &Service{tracer: tracer, features: features, registry: registry, cfg: cfg}
 }
@@ -70,7 +86,27 @@ func (s *Service) TrainAll(ctx context.Context, now time.Time) ([]ModelTrainResu
 	defer span.End()
 
 	from := now.UTC().AddDate(0, 0, -s.cfg.TrainWindowDays)
-	rows, err := s.features.ListLabeledRows(ctx, s.cfg.Interval, from, now.UTC())
+	results := make([]ModelTrainResult, 0, 4)
+
+	directionalResults, err := s.trainDirectional(ctx, from, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	results = append(results, directionalResults...)
+
+	if s.cfg.EnableIForest {
+		anomalyResults, err := s.trainAnomaly(ctx, from, now.UTC())
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, anomalyResults...)
+	}
+
+	return results, nil
+}
+
+func (s *Service) trainDirectional(ctx context.Context, from, now time.Time) ([]ModelTrainResult, error) {
+	rows, err := s.features.ListLabeledRows(ctx, s.cfg.Interval, from, now)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +122,8 @@ func (s *Service) TrainAll(ctx context.Context, now time.Time) ([]ModelTrainResu
 
 	results := make([]ModelTrainResult, 0, 2)
 
-	lrModel, err := logreg.Train(trainX, trainY, common.FeatureNames, logreg.DefaultTrainOptions())
+	lrOpts := logreg.DefaultTrainOptions()
+	lrModel, err := logreg.Train(trainX, trainY, common.FeatureNames, lrOpts)
 	if err != nil {
 		return nil, fmt.Errorf("train logreg: %w", err)
 	}
@@ -96,10 +133,10 @@ func (s *Service) TrainAll(ctx context.Context, now time.Time) ([]ModelTrainResu
 	}
 	lrPreds := lrModel.PredictBatch(testX)
 	lrMetrics := computeMetrics(testY, lrPreds)
-	lrResult, err := s.persistAndMaybePromote(ctx, common.ModelKeyLogReg, now.UTC(), from, lrBlob, "json/logreg-v1", map[string]any{
-		"learning_rate": logreg.DefaultTrainOptions().LearningRate,
-		"epochs":        logreg.DefaultTrainOptions().Epochs,
-		"l2":            logreg.DefaultTrainOptions().L2,
+	lrResult, err := s.persistAndMaybePromote(ctx, common.ModelKeyLogReg, s.cfg.Interval, now, from, lrBlob, "json/logreg-v1", map[string]any{
+		"learning_rate": lrOpts.LearningRate,
+		"epochs":        lrOpts.Epochs,
+		"l2":            lrOpts.L2,
 	}, lrMetrics, len(samples), len(testY))
 	if err != nil {
 		return nil, err
@@ -117,7 +154,7 @@ func (s *Service) TrainAll(ctx context.Context, now time.Time) ([]ModelTrainResu
 	}
 	xgbPreds := xgbModel.PredictBatch(testX)
 	xgbMetrics := computeMetrics(testY, xgbPreds)
-	xgbResult, err := s.persistAndMaybePromote(ctx, common.ModelKeyXGBoost, now.UTC(), from, xgbBlob, "json/boo-xgboost-v1", map[string]any{
+	xgbResult, err := s.persistAndMaybePromote(ctx, common.ModelKeyXGBoost, s.cfg.Interval, now, from, xgbBlob, "json/boo-xgboost-v1", map[string]any{
 		"rounds":        xgbOpts.Rounds,
 		"learning_rate": xgbOpts.LearningRate,
 		"max_depth":     xgbOpts.MaxDepth,
@@ -130,9 +167,69 @@ func (s *Service) TrainAll(ctx context.Context, now time.Time) ([]ModelTrainResu
 	return results, nil
 }
 
+func (s *Service) trainAnomaly(ctx context.Context, from, now time.Time) ([]ModelTrainResult, error) {
+	intervals := uniqueIntervals(s.cfg.Intervals, s.cfg.Interval)
+	results := make([]ModelTrainResult, 0, len(intervals))
+	minSamples := s.minAnomalySamples()
+
+	for _, interval := range intervals {
+		rows, err := s.features.ListRows(ctx, interval, from, now)
+		if err != nil {
+			return nil, err
+		}
+		samples := buildAnomalyDataset(rows)
+		if len(samples) < minSamples {
+			continue
+		}
+		modelKey := common.IForestModelKey(interval)
+		model, err := iforest.Train(samples, common.FeatureNames, modelKey, interval, from, now, iforest.TrainOptions{
+			NumTrees:   s.cfg.IForestTrees,
+			SampleSize: s.cfg.IForestSampleSize,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("train %s: %w", modelKey, err)
+		}
+		blob, err := model.MarshalBinary()
+		if err != nil {
+			return nil, fmt.Errorf("marshal %s: %w", modelKey, err)
+		}
+		scores := model.PredictBatch(samples)
+		metrics := anomalyMetrics(scores)
+		result, err := s.persistAndMaybePromoteAnomaly(
+			ctx,
+			modelKey,
+			interval,
+			now,
+			from,
+			blob,
+			map[string]any{
+				"num_trees":   s.cfg.IForestTrees,
+				"sample_size": s.cfg.IForestSampleSize,
+			},
+			metrics,
+			len(samples),
+		)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func (s *Service) minAnomalySamples() int {
+	minSamples := s.cfg.MinTrainSamples / 2
+	if minSamples < 300 {
+		minSamples = 300
+	}
+	return minSamples
+}
+
 func (s *Service) persistAndMaybePromote(
 	ctx context.Context,
 	modelKey string,
+	interval string,
 	now time.Time,
 	trainedFrom time.Time,
 	artifact []byte,
@@ -167,6 +264,7 @@ func (s *Service) persistAndMaybePromote(
 
 	result := ModelTrainResult{
 		ModelKey:    modelKey,
+		Interval:    interval,
 		Version:     inserted.Version,
 		SampleCount: sampleCount,
 		TestCount:   testCount,
@@ -174,6 +272,62 @@ func (s *Service) persistAndMaybePromote(
 	}
 
 	promote, promoteErr := s.shouldPromote(ctx, modelKey, metrics["auc"], testCount, inserted.Version)
+	if promoteErr != nil {
+		result.PromoteError = promoteErr
+		return result, nil
+	}
+	if promote {
+		if err := s.registry.ActivateModel(ctx, modelKey, inserted.Version); err != nil {
+			result.PromoteError = err
+			return result, nil
+		}
+		result.Promoted = true
+	}
+	return result, nil
+}
+
+func (s *Service) persistAndMaybePromoteAnomaly(
+	ctx context.Context,
+	modelKey string,
+	interval string,
+	now time.Time,
+	trainedFrom time.Time,
+	artifact []byte,
+	hyperparams map[string]any,
+	metrics map[string]float64,
+	sampleCount int,
+) (ModelTrainResult, error) {
+	version, err := s.registry.NextVersion(ctx, modelKey)
+	if err != nil {
+		return ModelTrainResult{}, err
+	}
+	hyperJSON, _ := json.Marshal(hyperparams)
+	metricJSON, _ := json.Marshal(metrics)
+
+	inserted, err := s.registry.InsertModelVersion(ctx, domain.MLModelVersion{
+		ModelKey:           modelKey,
+		Version:            version,
+		FeatureSpecVersion: features.FeatureSpecVersion(),
+		TrainedFrom:        trainedFrom,
+		TrainedTo:          now,
+		HyperparamsJSON:    string(hyperJSON),
+		MetricsJSON:        string(metricJSON),
+		ArtifactFormat:     "json/iforest-v1",
+		ArtifactBlob:       artifact,
+		IsActive:           false,
+	})
+	if err != nil {
+		return ModelTrainResult{}, err
+	}
+
+	result := ModelTrainResult{
+		ModelKey:    modelKey,
+		Interval:    interval,
+		Version:     inserted.Version,
+		SampleCount: sampleCount,
+	}
+
+	promote, promoteErr := s.shouldPromoteAnomaly(ctx, modelKey, metrics["score_std"], inserted.Version)
 	if promoteErr != nil {
 		result.PromoteError = promoteErr
 		return result, nil
@@ -209,6 +363,24 @@ func (s *Service) shouldPromote(ctx context.Context, modelKey string, newAUC flo
 	return newAUC >= activeAUC+0.01, nil
 }
 
+func (s *Service) shouldPromoteAnomaly(ctx context.Context, modelKey string, newStd float64, newVersion int) (bool, error) {
+	active, err := s.registry.GetActiveModel(ctx, modelKey)
+	if err != nil {
+		return false, err
+	}
+	if active == nil {
+		return true, nil
+	}
+	if active.Version == newVersion {
+		return active.IsActive, nil
+	}
+	activeStd, ok := metricValue(active.MetricsJSON, "score_std")
+	if !ok {
+		return true, nil
+	}
+	return newStd >= activeStd+0.01, nil
+}
+
 func buildDataset(rows []domain.MLFeatureRow) ([][]float64, []float64) {
 	x := make([][]float64, 0, len(rows))
 	y := make([]float64, 0, len(rows))
@@ -221,6 +393,14 @@ func buildDataset(rows []domain.MLFeatureRow) ([][]float64, []float64) {
 		y = append(y, label)
 	}
 	return x, y
+}
+
+func buildAnomalyDataset(rows []domain.MLFeatureRow) [][]float64 {
+	x := make([][]float64, 0, len(rows))
+	for i := range rows {
+		x = append(x, common.FeatureVector(rows[i]))
+	}
+	return x
 }
 
 func chronologicalSplit(samples [][]float64, labels []float64) (trainX [][]float64, trainY []float64, valX [][]float64, valY []float64, testX [][]float64, testY []float64) {
@@ -255,6 +435,70 @@ func chronologicalSplit(samples [][]float64, labels []float64) (trainX [][]float
 	return samples[:trainEnd], labels[:trainEnd],
 		samples[trainEnd:valEnd], labels[trainEnd:valEnd],
 		samples[valEnd:], labels[valEnd:]
+}
+
+func anomalyMetrics(scores []float64) map[string]float64 {
+	if len(scores) == 0 {
+		return map[string]float64{
+			"score_mean": 0,
+			"score_std":  0,
+			"score_p95":  0,
+			"n":          0,
+		}
+	}
+	values := make([]float64, len(scores))
+	for i, score := range scores {
+		values[i] = common.Clamp01(score)
+	}
+	mean, std := meanStd(values)
+	return map[string]float64{
+		"score_mean": mean,
+		"score_std":  std,
+		"score_p95":  percentile(values, 0.95),
+		"n":          float64(len(values)),
+	}
+}
+
+func meanStd(values []float64) (float64, float64) {
+	if len(values) == 0 {
+		return 0, 0
+	}
+	mean := 0.0
+	for _, v := range values {
+		mean += v
+	}
+	mean /= float64(len(values))
+	if len(values) == 1 {
+		return mean, 0
+	}
+	variance := 0.0
+	for _, v := range values {
+		d := v - mean
+		variance += d * d
+	}
+	return mean, math.Sqrt(variance / float64(len(values)))
+}
+
+func percentile(values []float64, p float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	if p <= 0 {
+		p = 0
+	}
+	if p >= 1 {
+		p = 1
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	index := int(math.Round(p * float64(len(sorted)-1)))
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
 }
 
 func metricValue(metricsJSON, key string) (float64, bool) {
@@ -367,4 +611,29 @@ func computeAUC(labels []float64, probs []float64) float64 {
 		return 0.5
 	}
 	return auc
+}
+
+func uniqueIntervals(intervals []string, fallback string) []string {
+	if fallback == "" {
+		fallback = "1h"
+	}
+	if len(intervals) == 0 {
+		return []string{fallback}
+	}
+	seen := make(map[string]struct{}, len(intervals))
+	out := make([]string, 0, len(intervals))
+	for _, interval := range intervals {
+		if interval == "" {
+			continue
+		}
+		if _, ok := seen[interval]; ok {
+			continue
+		}
+		seen[interval] = struct{}{}
+		out = append(out, interval)
+	}
+	if len(out) == 0 {
+		return []string{fallback}
+	}
+	return out
 }

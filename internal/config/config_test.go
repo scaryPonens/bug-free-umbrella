@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "")
@@ -16,6 +19,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("MCP_RATE_LIMIT_PER_MIN", "")
 	t.Setenv("ML_ENABLED", "")
 	t.Setenv("ML_INTERVAL", "")
+	t.Setenv("ML_INTERVALS", "")
 	t.Setenv("ML_TARGET_HOURS", "")
 	t.Setenv("ML_TRAIN_WINDOW_DAYS", "")
 	t.Setenv("ML_INFER_POLL_SECS", "")
@@ -24,6 +28,11 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("ML_LONG_THRESHOLD", "")
 	t.Setenv("ML_SHORT_THRESHOLD", "")
 	t.Setenv("ML_MIN_TRAIN_SAMPLES", "")
+	t.Setenv("ML_ENABLE_IFOREST", "")
+	t.Setenv("ML_ANOMALY_THRESHOLD", "")
+	t.Setenv("ML_ANOMALY_DAMP_MAX", "")
+	t.Setenv("ML_IFOREST_TREES", "")
+	t.Setenv("ML_IFOREST_SAMPLE_SIZE", "")
 
 	cfg := Load()
 	if cfg.RedisURL != "localhost:6379" {
@@ -44,11 +53,20 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MLEnabled || cfg.MLInterval != "1h" || cfg.MLTargetHours != 4 || cfg.MLTrainWindowDays != 90 {
 		t.Fatalf("unexpected ML defaults: %+v", cfg)
 	}
+	if !reflect.DeepEqual(cfg.MLIntervals, []string{"1h"}) {
+		t.Fatalf("unexpected ML interval defaults: %+v", cfg.MLIntervals)
+	}
 	if cfg.MLInferPollSecs != 900 || cfg.MLResolvePollSecs != 1800 || cfg.MLTrainHourUTC != 0 {
 		t.Fatalf("unexpected ML poll defaults: %+v", cfg)
 	}
 	if cfg.MLLongThreshold != 0.55 || cfg.MLShortThreshold != 0.45 || cfg.MLMinTrainSamples != 1000 {
 		t.Fatalf("unexpected ML threshold defaults: %+v", cfg)
+	}
+	if !cfg.MLEnableIForest || cfg.MLAnomalyThresh != 0.62 || cfg.MLAnomalyDampMax != 0.65 {
+		t.Fatalf("unexpected ML anomaly defaults: %+v", cfg)
+	}
+	if cfg.MLIForestTrees != 200 || cfg.MLIForestSample != 256 {
+		t.Fatalf("unexpected ML iforest defaults: %+v", cfg)
 	}
 }
 
@@ -66,6 +84,7 @@ func TestLoadWithEnv(t *testing.T) {
 	t.Setenv("MCP_RATE_LIMIT_PER_MIN", "75")
 	t.Setenv("ML_ENABLED", "true")
 	t.Setenv("ML_INTERVAL", "1h")
+	t.Setenv("ML_INTERVALS", "1h,4h,invalid,1h")
 	t.Setenv("ML_TARGET_HOURS", "6")
 	t.Setenv("ML_TRAIN_WINDOW_DAYS", "30")
 	t.Setenv("ML_INFER_POLL_SECS", "600")
@@ -74,6 +93,11 @@ func TestLoadWithEnv(t *testing.T) {
 	t.Setenv("ML_LONG_THRESHOLD", "0.60")
 	t.Setenv("ML_SHORT_THRESHOLD", "0.40")
 	t.Setenv("ML_MIN_TRAIN_SAMPLES", "200")
+	t.Setenv("ML_ENABLE_IFOREST", "false")
+	t.Setenv("ML_ANOMALY_THRESHOLD", "0.70")
+	t.Setenv("ML_ANOMALY_DAMP_MAX", "0.50")
+	t.Setenv("ML_IFOREST_TREES", "111")
+	t.Setenv("ML_IFOREST_SAMPLE_SIZE", "333")
 
 	cfg := Load()
 	if cfg.TelegramBotToken != "token" || cfg.DatabaseURL != "postgres://example" || cfg.RedisURL != "redis:6379" {
@@ -91,11 +115,20 @@ func TestLoadWithEnv(t *testing.T) {
 	if !cfg.MLEnabled || cfg.MLInterval != "1h" || cfg.MLTargetHours != 6 || cfg.MLTrainWindowDays != 30 {
 		t.Fatalf("unexpected ML env values: %+v", cfg)
 	}
+	if !reflect.DeepEqual(cfg.MLIntervals, []string{"1h", "4h"}) {
+		t.Fatalf("unexpected ML interval list: %+v", cfg.MLIntervals)
+	}
 	if cfg.MLInferPollSecs != 600 || cfg.MLResolvePollSecs != 1200 || cfg.MLTrainHourUTC != 3 {
 		t.Fatalf("unexpected ML poll env values: %+v", cfg)
 	}
 	if cfg.MLLongThreshold != 0.60 || cfg.MLShortThreshold != 0.40 || cfg.MLMinTrainSamples != 200 {
 		t.Fatalf("unexpected ML threshold env values: %+v", cfg)
+	}
+	if cfg.MLEnableIForest || cfg.MLAnomalyThresh != 0.70 || cfg.MLAnomalyDampMax != 0.50 {
+		t.Fatalf("unexpected ML anomaly env values: %+v", cfg)
+	}
+	if cfg.MLIForestTrees != 111 || cfg.MLIForestSample != 333 {
+		t.Fatalf("unexpected ML iforest env values: %+v", cfg)
 	}
 
 	t.Setenv("COINGECKO_POLL_SECS", "bad")
@@ -110,6 +143,12 @@ func TestLoadWithEnv(t *testing.T) {
 	t.Setenv("ML_LONG_THRESHOLD", "bad")
 	t.Setenv("ML_SHORT_THRESHOLD", "bad")
 	t.Setenv("ML_MIN_TRAIN_SAMPLES", "bad")
+	t.Setenv("ML_INTERVALS", "bad,")
+	t.Setenv("ML_ENABLE_IFOREST", "bad")
+	t.Setenv("ML_ANOMALY_THRESHOLD", "bad")
+	t.Setenv("ML_ANOMALY_DAMP_MAX", "bad")
+	t.Setenv("ML_IFOREST_TREES", "bad")
+	t.Setenv("ML_IFOREST_SAMPLE_SIZE", "bad")
 	cfg = Load()
 	if cfg.CoinGeckoPollSecs != 60 {
 		t.Fatalf("invalid poll secs should fall back to default, got %d", cfg.CoinGeckoPollSecs)
@@ -122,5 +161,11 @@ func TestLoadWithEnv(t *testing.T) {
 	}
 	if cfg.MLTrainHourUTC != 0 || cfg.MLLongThreshold != 0.55 || cfg.MLShortThreshold != 0.45 || cfg.MLMinTrainSamples != 1000 {
 		t.Fatalf("invalid ML threshold values should fall back to defaults: %+v", cfg)
+	}
+	if !reflect.DeepEqual(cfg.MLIntervals, []string{"1h"}) {
+		t.Fatalf("invalid ML interval list should fall back to ML_INTERVAL: %+v", cfg.MLIntervals)
+	}
+	if !cfg.MLEnableIForest || cfg.MLAnomalyThresh != 0.62 || cfg.MLAnomalyDampMax != 0.65 || cfg.MLIForestTrees != 200 || cfg.MLIForestSample != 256 {
+		t.Fatalf("invalid ML anomaly values should fall back to defaults: %+v", cfg)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"bug-free-umbrella/internal/domain"
+	"bug-free-umbrella/internal/ml/common"
 	"bug-free-umbrella/internal/ml/features"
 	"bug-free-umbrella/internal/ml/inference"
 	"bug-free-umbrella/internal/ml/predictions"
@@ -31,13 +32,14 @@ type MLSignalService struct {
 	inferenceSvc   *inference.Service
 	predictionRepo *predictions.Repository
 
-	interval        string
+	intervals       []string
 	targetHours     int
 	trainWindowDays int
 }
 
 type MLSignalServiceConfig struct {
 	Interval        string
+	Intervals       []string
 	TargetHours     int
 	TrainWindowDays int
 }
@@ -54,6 +56,9 @@ func NewMLSignalService(
 ) *MLSignalService {
 	if cfg.Interval == "" {
 		cfg.Interval = "1h"
+	}
+	if len(cfg.Intervals) == 0 {
+		cfg.Intervals = []string{cfg.Interval}
 	}
 	if cfg.TargetHours <= 0 {
 		cfg.TargetHours = 4
@@ -72,7 +77,7 @@ func NewMLSignalService(
 		trainingSvc:     trainingSvc,
 		inferenceSvc:    inferenceSvc,
 		predictionRepo:  predictionRepo,
-		interval:        cfg.Interval,
+		intervals:       uniqueIntervals(cfg.Intervals, cfg.Interval),
 		targetHours:     cfg.TargetHours,
 		trainWindowDays: cfg.TrainWindowDays,
 	}
@@ -87,26 +92,25 @@ func (s *MLSignalService) RefreshFeatures(ctx context.Context) (int, error) {
 	}
 
 	rowsCount := 0
-	limit := (s.trainWindowDays * 24) + s.targetHours + 48
-	if limit < 500 {
-		limit = 500
-	}
-	for _, symbol := range domain.SupportedSymbols {
-		candles, err := s.candleRepo.GetCandles(ctx, symbol, s.interval, limit)
-		if err != nil {
-			return rowsCount, fmt.Errorf("get candles for %s: %w", symbol, err)
+	for _, interval := range s.intervals {
+		limit := candleLimitForInterval(interval, s.trainWindowDays, s.targetHours)
+		for _, symbol := range domain.SupportedSymbols {
+			candles, err := s.candleRepo.GetCandles(ctx, symbol, interval, limit)
+			if err != nil {
+				return rowsCount, fmt.Errorf("get candles for %s %s: %w", symbol, interval, err)
+			}
+			if len(candles) == 0 {
+				continue
+			}
+			rows := s.featureEngine.BuildRows(candles, s.targetHours)
+			if len(rows) == 0 {
+				continue
+			}
+			if err := s.featureRepo.UpsertRows(ctx, rows); err != nil {
+				return rowsCount, fmt.Errorf("upsert feature rows for %s %s: %w", symbol, interval, err)
+			}
+			rowsCount += len(rows)
 		}
-		if len(candles) == 0 {
-			continue
-		}
-		rows := s.featureEngine.BuildRows(candles, s.targetHours)
-		if len(rows) == 0 {
-			continue
-		}
-		if err := s.featureRepo.UpsertRows(ctx, rows); err != nil {
-			return rowsCount, fmt.Errorf("upsert feature rows for %s: %w", symbol, err)
-		}
-		rowsCount += len(rows)
 	}
 	return rowsCount, nil
 }
@@ -150,6 +154,9 @@ func (s *MLSignalService) ResolveOutcomes(ctx context.Context, limit int) (int, 
 	resolved := 0
 	for i := range pending {
 		pred := pending[i]
+		if !shouldResolvePrediction(pred.ModelKey) {
+			continue
+		}
 		candles, err := s.candleRepo.GetCandlesInRange(ctx, pred.Symbol, pred.Interval, pred.OpenTime, pred.TargetTime)
 		if err != nil {
 			return resolved, err
@@ -176,6 +183,50 @@ func (s *MLSignalService) ResolveOutcomes(ctx context.Context, limit int) (int, 
 		resolved++
 	}
 	return resolved, nil
+}
+
+func uniqueIntervals(intervals []string, fallback string) []string {
+	if fallback == "" {
+		fallback = "1h"
+	}
+	if len(intervals) == 0 {
+		return []string{fallback}
+	}
+	seen := make(map[string]struct{}, len(intervals))
+	out := make([]string, 0, len(intervals))
+	for _, interval := range intervals {
+		if interval == "" {
+			continue
+		}
+		if _, ok := seen[interval]; ok {
+			continue
+		}
+		seen[interval] = struct{}{}
+		out = append(out, interval)
+	}
+	if len(out) == 0 {
+		return []string{fallback}
+	}
+	return out
+}
+
+func candleLimitForInterval(interval string, windowDays int, targetHours int) int {
+	pointsPerDay := 24
+	switch interval {
+	case "4h":
+		pointsPerDay = 6
+	case "1d":
+		pointsPerDay = 1
+	}
+	limit := (windowDays * pointsPerDay) + targetHours + 64
+	if limit < 500 {
+		limit = 500
+	}
+	return limit
+}
+
+func shouldResolvePrediction(modelKey string) bool {
+	return !common.IsIForestModelKey(modelKey)
 }
 
 func extractOpenAndTargetClose(candles []*domain.Candle, openTime, targetTime time.Time) (float64, float64, bool) {
