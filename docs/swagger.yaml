@@ -13,7 +13,7 @@ definitions:
       volume_24h:
         type: number
     type: object
-host: localhost:8080
+host: adad.reubenpeterpaul.com
 info:
   contact: {}
   description: A Go service with OpenTelemetry tracing.

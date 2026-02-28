@@ -81,7 +81,7 @@ var (
 // @version         1.0
 // @description     A Go service with OpenTelemetry tracing.
 
-// @host      localhost:8080
+// @host      adad.reubenpeterpaul.com
 // @BasePath  /
 
 // @securityDefinitions.apikey ApiKeyAuth
