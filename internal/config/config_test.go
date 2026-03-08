@@ -108,6 +108,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.OnChainBTCMempoolBaseURL == "" || cfg.OnChainETHBlockscoutBaseURL == "" || cfg.OnChainADAKoiosBaseURL == "" || cfg.OnChainXRPAPIBaseURL == "" {
 		t.Fatalf("expected onchain base urls to have defaults: %+v", cfg)
 	}
+	if cfg.WebConsoleEnabled {
+		t.Fatalf("expected web console disabled by default")
+	}
+	if cfg.WebConsoleCookieSecret == "" || cfg.WebConsoleSessionTTLSecs != 86400 || cfg.WebConsoleHeartbeatSecs != 20 || cfg.WebConsoleStaticDir != "web/dist" {
+		t.Fatalf("unexpected web console defaults: %+v", cfg)
+	}
 }
 
 func TestLoadWithEnv(t *testing.T) {
@@ -157,6 +163,11 @@ func TestLoadWithEnv(t *testing.T) {
 	t.Setenv("ONCHAIN_ETH_BLOCKSCOUT_BASE_URL", "https://eth.custom")
 	t.Setenv("ONCHAIN_ADA_KOIOS_BASE_URL", "https://koios.custom")
 	t.Setenv("ONCHAIN_XRP_API_BASE_URL", "https://xrp.custom")
+	t.Setenv("WEB_CONSOLE_ENABLED", "true")
+	t.Setenv("WEB_CONSOLE_COOKIE_SECRET", "console-secret")
+	t.Setenv("WEB_CONSOLE_SESSION_TTL_SECS", "3600")
+	t.Setenv("WEB_CONSOLE_WS_HEARTBEAT_SECS", "30")
+	t.Setenv("WEB_CONSOLE_STATIC_DIR", "ui/dist")
 
 	cfg := Load()
 	if cfg.TelegramBotToken != "token" || cfg.DatabaseURL != "postgres://example" || cfg.RedisURL != "redis:6379" {
@@ -219,6 +230,11 @@ func TestLoadWithEnv(t *testing.T) {
 		cfg.OnChainXRPAPIBaseURL != "https://xrp.custom" {
 		t.Fatalf("unexpected onchain base url env values: %+v", cfg)
 	}
+	if !cfg.WebConsoleEnabled || cfg.WebConsoleCookieSecret != "console-secret" ||
+		cfg.WebConsoleSessionTTLSecs != 3600 || cfg.WebConsoleHeartbeatSecs != 30 ||
+		cfg.WebConsoleStaticDir != "ui/dist" {
+		t.Fatalf("unexpected web console env values: %+v", cfg)
+	}
 
 	t.Setenv("COINGECKO_POLL_SECS", "bad")
 	t.Setenv("MCP_HTTP_PORT", "bad")
@@ -249,6 +265,9 @@ func TestLoadWithEnv(t *testing.T) {
 	t.Setenv("MARKET_INTEL_RETENTION_DAYS", "bad")
 	t.Setenv("MARKET_INTEL_ENABLE_ONCHAIN", "bad")
 	t.Setenv("MARKET_INTEL_ONCHAIN_SYMBOLS", "notasymbol")
+	t.Setenv("WEB_CONSOLE_SESSION_TTL_SECS", "bad")
+	t.Setenv("WEB_CONSOLE_WS_HEARTBEAT_SECS", "bad")
+	t.Setenv("WEB_CONSOLE_STATIC_DIR", "")
 	cfg = Load()
 	if cfg.CoinGeckoPollSecs != 60 {
 		t.Fatalf("invalid poll secs should fall back to default, got %d", cfg.CoinGeckoPollSecs)
@@ -282,5 +301,8 @@ func TestLoadWithEnv(t *testing.T) {
 	}
 	if !cfg.MarketIntelEnableOnChain || !reflect.DeepEqual(cfg.MarketIntelOnChainSymbols, []string{"BTC", "ETH", "ADA", "XRP"}) {
 		t.Fatalf("invalid market intel onchain values should fall back to defaults: %+v", cfg)
+	}
+	if cfg.WebConsoleSessionTTLSecs != 86400 || cfg.WebConsoleHeartbeatSecs != 20 || cfg.WebConsoleStaticDir != "web/dist" {
+		t.Fatalf("invalid web console values should fall back to defaults: %+v", cfg)
 	}
 }

@@ -1,3 +1,13 @@
+FROM node:22-alpine AS webbuilder
+
+WORKDIR /web
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web .
+RUN npm run build
+
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
@@ -21,6 +31,8 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
+
+COPY --from=webbuilder /web/dist ./web/dist
 
 COPY --from=builder /app/main .
 COPY --from=builder /app/mcp .

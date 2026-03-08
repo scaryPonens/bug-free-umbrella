@@ -12,6 +12,7 @@ type Handler struct {
 	workService       *service.WorkService
 	priceService      *service.PriceService
 	signalService     *service.SignalService
+	backtestService   *service.BacktestService
 	mlTrainer         MLTrainingRunner
 	marketIntelRunner MarketIntelRunner
 }
@@ -38,12 +39,19 @@ func (h *Handler) SetMarketIntelRunner(runner MarketIntelRunner) {
 	h.marketIntelRunner = runner
 }
 
+func (h *Handler) SetBacktestService(svc *service.BacktestService) {
+	h.backtestService = svc
+}
+
 func (h *Handler) RegisterRoutes(r gin.IRouter) {
 	r.GET("/api/prices", h.GetAllPrices)
 	r.GET("/api/prices/:symbol", h.GetPrice)
 	r.GET("/api/candles/:symbol", h.GetCandles)
 	r.GET("/api/signals", h.GetSignals)
 	r.GET("/api/signals/:id/image", h.GetSignalImage)
+	r.GET("/api/backtest/summary", h.GetBacktestSummary)
+	r.GET("/api/backtest/daily", h.GetBacktestDaily)
+	r.GET("/api/backtest/predictions", h.GetBacktestPredictions)
 	r.POST("/api/ml/train", h.TriggerMLTraining)
 	r.POST("/api/market-intel/run", h.TriggerMarketIntelRun)
 }

@@ -33,3 +33,7 @@ go.work.sum
 .ssh
 server
 post*.md
+
+# Web frontend
+web/node_modules/
+web/dist/

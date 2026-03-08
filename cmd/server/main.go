@@ -29,6 +29,7 @@ import (
 	"bug-free-umbrella/internal/repository"
 	"bug-free-umbrella/internal/service"
 	signalengine "bug-free-umbrella/internal/signal"
+	"bug-free-umbrella/internal/webconsole"
 	"bug-free-umbrella/pkg/tracing"
 
 	"github.com/gin-contrib/cors"
@@ -51,12 +52,14 @@ var (
 	newCandleRepoFunc        = repository.NewCandleRepository
 	newSignalRepoFunc        = repository.NewSignalRepository
 	newSignalImageRepoFunc   = repository.NewSignalImageRepository
+	newBacktestRepoFunc      = repository.NewBacktestRepository
 	newCoinGeckoProviderFunc = func(tracer trace.Tracer) service.PriceProvider {
 		return provider.NewCoinGeckoProvider(tracer)
 	}
 	newSignalEngineFunc            = signalengine.NewEngine
 	newPriceServiceFunc            = service.NewPriceService
 	newSignalServiceWithImagesFunc = service.NewSignalServiceWithImages
+	newBacktestServiceFunc         = service.NewBacktestService
 	newChartRendererFunc           = chart.NewRenderer
 	newPricePollerFunc             = job.NewPricePoller
 	newSignalPollerFunc            = job.NewSignalPoller
@@ -70,6 +73,11 @@ var (
 	startTelegramBotFunc           = bot.StartTelegramBot
 	newWorkServiceFunc             = service.NewWorkService
 	newHandlerFunc                 = handler.New
+	newWebConsoleAuthFunc          = webconsole.NewAuthService
+	newWebConsoleSessionFunc       = webconsole.NewSessionManager
+	newWebConsoleServiceFunc       = webconsole.NewService
+	newWebConsoleHandlerFunc       = webconsole.NewHandler
+	registerWebConsoleSPAFunc      = webconsole.RegisterSPARoutes
 	newRouterFunc                  = gin.Default
 	setupSignalNotify              = ossignal.Notify
 	waitForSignalFunc              = func(quit <-chan os.Signal) { <-quit }
@@ -116,6 +124,7 @@ func main() {
 	candleRepo := newCandleRepoFunc(db.Pool, tracer)
 	signalRepo := newSignalRepoFunc(db.Pool, tracer)
 	signalImageRepo := newSignalImageRepoFunc(db.Pool, tracer)
+	backtestRepo := newBacktestRepoFunc(db.Pool, tracer)
 
 	// Create providers and services
 	cgProvider := newCoinGeckoProviderFunc(tracer)
@@ -274,6 +283,8 @@ func main() {
 	// Create handlers and routes
 	workService := newWorkServiceFunc(tracer)
 	h := newHandlerFunc(tracer, workService, priceService, signalService)
+	backtestService := newBacktestServiceFunc(tracer, backtestRepo)
+	h.SetBacktestService(backtestService)
 	if mlService != nil {
 		h.SetMLTrainingRunner(mlService)
 	}
@@ -305,6 +316,20 @@ func main() {
 	protected := r.Group("")
 	protected.Use(handler.APIKeyAuth(cfg.RESTAPIKey))
 	h.RegisterRoutes(protected)
+
+	if cfg.WebConsoleEnabled {
+		sessionTTL := time.Duration(cfg.WebConsoleSessionTTLSecs) * time.Second
+		heartbeat := time.Duration(cfg.WebConsoleHeartbeatSecs) * time.Second
+		authSvc := newWebConsoleAuthFunc(cache.Client, sessionTTL, cfg.WebConsoleCookieSecret)
+		sessionMgr := newWebConsoleSessionFunc(cache.Client, sessionTTL)
+		webConsoleService := newWebConsoleServiceFunc(priceService, signalService, backtestService, advisorSvc)
+		webConsoleHandler := newWebConsoleHandlerFunc(tracer, authSvc, sessionMgr, webConsoleService, webconsole.HandlerConfig{
+			ExpectedAPIKey: cfg.RESTAPIKey,
+			Heartbeat:      heartbeat,
+		})
+		webConsoleHandler.RegisterRoutes(r.Group("/api/web-console"))
+		registerWebConsoleSPAFunc(r, cfg.WebConsoleStaticDir)
+	}
 
 	srv := &http.Server{
 		Addr:    httpAddrFromEnv(),

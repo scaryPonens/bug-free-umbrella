@@ -71,6 +71,12 @@ type Config struct {
 
 	RESTAPIKey         string
 	CORSAllowedOrigins []string
+
+	WebConsoleEnabled        bool
+	WebConsoleCookieSecret   string
+	WebConsoleSessionTTLSecs int
+	WebConsoleHeartbeatSecs  int
+	WebConsoleStaticDir      string
 }
 
 func Load() *Config {
@@ -403,6 +409,32 @@ func Load() *Config {
 				cfg.CORSAllowedOrigins = append(cfg.CORSAllowedOrigins, s)
 			}
 		}
+	}
+
+	cfg.WebConsoleEnabled = strings.EqualFold(strings.TrimSpace(os.Getenv("WEB_CONSOLE_ENABLED")), "true")
+
+	cfg.WebConsoleCookieSecret = strings.TrimSpace(os.Getenv("WEB_CONSOLE_COOKIE_SECRET"))
+	if cfg.WebConsoleCookieSecret == "" {
+		cfg.WebConsoleCookieSecret = "web-console-dev-secret"
+	}
+
+	cfg.WebConsoleSessionTTLSecs = 24 * 60 * 60
+	if v := strings.TrimSpace(os.Getenv("WEB_CONSOLE_SESSION_TTL_SECS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.WebConsoleSessionTTLSecs = n
+		}
+	}
+
+	cfg.WebConsoleHeartbeatSecs = 20
+	if v := strings.TrimSpace(os.Getenv("WEB_CONSOLE_WS_HEARTBEAT_SECS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.WebConsoleHeartbeatSecs = n
+		}
+	}
+
+	cfg.WebConsoleStaticDir = strings.TrimSpace(os.Getenv("WEB_CONSOLE_STATIC_DIR"))
+	if cfg.WebConsoleStaticDir == "" {
+		cfg.WebConsoleStaticDir = "web/dist"
 	}
 
 	return cfg

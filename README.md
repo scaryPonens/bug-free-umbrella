@@ -15,6 +15,7 @@ Go-based crypto trading advisor bot. Tracks live crypto prices, stores OHLCV can
 - Telegram bot (`/ping`, `/price`, `/volume`, `/signals`, `/alerts`)
 - MCP service (`stdio` + streamable HTTP transport) with tools/resources for prices, candles, and signals
 - Signal chart imaging (candlestick + triggering indicator) stored in Postgres and served to Telegram/API/MCP
+- Browser-based operator console (`/console`) with command streaming over WebSocket
 - OpenTelemetry tracing with Jaeger
 - Configurable via `.env` file
 
@@ -123,6 +124,9 @@ MCP_RATE_LIMIT_PER_MIN=60
 | GET    | /api/candles/:symbol  | OHLCV candles (`?interval=1h&limit=100`)       |
 | GET    | /api/signals          | Technical signals (`?symbol=BTC&risk=3&limit=50`) |
 | GET    | /api/signals/:id/image | Signal chart image (`image/png`)                  |
+| GET    | /api/backtest/summary | ML backtest summary by model |
+| GET    | /api/backtest/daily | Daily ML backtest accuracy (`?model=ml_logreg_up4h&days=30`) |
+| GET    | /api/backtest/predictions | Recent resolved ML predictions (`?limit=50`) |
 | POST   | /api/ml/train         | Manually trigger ML training cycle (when ML is enabled) |
 | POST   | /api/market-intel/run | Manually trigger one fundamentals/sentiment cycle |
 
@@ -208,6 +212,29 @@ MCP resources:
 - `prices://symbol/{symbol}`
 - `candles://{symbol}/{interval}?limit={n}`
 - `signals://latest?symbol={s}&risk={r}&indicator={i}&limit={n}`
+
+## Web Operator Console
+
+Enable and run the browser console:
+
+```sh
+WEB_CONSOLE_ENABLED=true go run ./cmd/server
+```
+
+Open `http://localhost:8080/console`.
+
+API routes used by the frontend:
+- `POST /api/web-console/login` (uses `X-API-Key`)
+- `POST /api/web-console/logout`
+- `GET /api/web-console/session`
+- `GET /api/web-console/ws` (WebSocket)
+
+Additional env vars:
+- `WEB_CONSOLE_ENABLED`
+- `WEB_CONSOLE_COOKIE_SECRET`
+- `WEB_CONSOLE_SESSION_TTL_SECS`
+- `WEB_CONSOLE_WS_HEARTBEAT_SECS`
+- `WEB_CONSOLE_STATIC_DIR`
 
 ### Claude Desktop (stdio) local testing
 
