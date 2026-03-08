@@ -23,6 +23,16 @@ import { ConsoleSocket } from './lib/ws'
 import type { ChatLine, ConnectionState, DailyAccuracy, Prediction, ServerEvent, Signal, TabKey } from './types/events'
 
 const SIGNAL_VISIBLE_ROWS = 16
+const INDICATOR_TLDR: Record<string, string> = {
+  rsi: 'Momentum oscillator. High values suggest overbought conditions; low values suggest oversold conditions.',
+  macd: 'Trend and momentum crossover. Positive separation leans bullish; negative separation leans bearish.',
+  bollinger: 'Volatility bands around price. Moves near outer bands can signal stretch and possible mean reversion.',
+  volume_zscore: 'Volume anomaly detector. Unusual volume spikes can validate or warn against weak moves.',
+  ml_logreg_up4h: 'ML logistic model probability of upside over ~4h using engineered features.',
+  ml_xgboost_up4h: 'ML boosted-tree probability of upside over ~4h with nonlinear feature interactions.',
+  ml_ensemble_up4h: 'Ensemble of ML models; generally more stable than single-model signals.',
+  fund_sentiment_composite: 'Composite of sentiment/fundamental feeds; reflects macro narrative pressure.',
+}
 
 function uid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -114,6 +124,10 @@ function isMobileViewport(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches
 }
 
+function signalChartSubtitle(signal: Signal): string {
+  return `${signal.symbol} ${signal.indicator} R${signal.risk} ${signal.direction.toUpperCase()}`
+}
+
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false)
   const [apiKeyInput, setAPIKeyInput] = useState('')
@@ -134,6 +148,7 @@ export default function App() {
   const [selectedSignalID, setSelectedSignalID] = useState<number | null>(null)
   const [selectedSignalChartURL, setSelectedSignalChartURL] = useState<string | null>(null)
   const [signalChartModalOpen, setSignalChartModalOpen] = useState(false)
+  const [mobileChartInfoOpen, setMobileChartInfoOpen] = useState(false)
   const [backtestView, setBacktestView] = useState<'accuracy' | 'predictions'>('accuracy')
 
   const socketRef = useRef<ConsoleSocket | null>(null)
@@ -179,14 +194,22 @@ export default function App() {
         symbol: signalSymbolIndex > 0 ? SIGNAL_SYMBOL_OPTIONS[signalSymbolIndex] : undefined,
         risk: signalRiskIndex > 0 ? Number(SIGNAL_RISK_OPTIONS[signalRiskIndex]) : undefined,
         indicator: signalIndicatorIndex > 0 ? SIGNAL_INDICATOR_OPTIONS[signalIndicatorIndex] : undefined,
-      }),
+    }),
     enabled: authenticated,
   })
+
+  const selectedSignal = useMemo(() => {
+    if (!selectedSignalID) {
+      return null
+    }
+    return (signalsQuery.data ?? []).find((signal) => signal.id === selectedSignalID) ?? null
+  }, [selectedSignalID, signalsQuery.data])
+  const selectedSignalHasChart = Boolean(selectedSignal && hasSignalChart(selectedSignal))
 
   const signalChartQuery = useQuery({
     queryKey: ['signal-chart', apiKey, selectedSignalID],
     queryFn: () => getSignalImage(apiKey, selectedSignalID ?? 0),
-    enabled: authenticated && selectedSignalID !== null,
+    enabled: authenticated && selectedSignalID !== null && selectedSignalHasChart,
   })
 
   const backtestSummaryQuery = useQuery({
@@ -215,10 +238,11 @@ export default function App() {
     if (!selectedSignalID) {
       setSelectedSignalChartURL(null)
       setSignalChartModalOpen(false)
+      setMobileChartInfoOpen(false)
       return
     }
 
-    const selectedStillVisible = (signalsQuery.data ?? []).some((signal) => signal.id === selectedSignalID && hasSignalChart(signal))
+    const selectedStillVisible = (signalsQuery.data ?? []).some((signal) => signal.id === selectedSignalID)
     if (!selectedStillVisible) {
       setSelectedSignalID(null)
       setSelectedSignalChartURL(null)
@@ -226,7 +250,7 @@ export default function App() {
   }, [signalsQuery.data, selectedSignalID])
 
   useEffect(() => {
-    if (!signalChartQuery.data) {
+    if (!selectedSignalHasChart || !signalChartQuery.data) {
       setSelectedSignalChartURL(null)
       return
     }
@@ -240,6 +264,7 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== 'signals') {
       setSignalChartModalOpen(false)
+      setMobileChartInfoOpen(false)
     }
   }, [activeTab])
 
@@ -510,6 +535,8 @@ export default function App() {
     return all.slice(signalsScrollOffset, signalsScrollOffset + SIGNAL_VISIBLE_ROWS)
   }, [signalsQuery.data, signalsScrollOffset])
 
+  const selectedIndicatorTLDR = selectedSignal ? INDICATOR_TLDR[selectedSignal.indicator] ?? 'No summary available for this indicator.' : ''
+
   if (!authenticated) {
     return (
       <main className="console-shell console-shell--auth">
@@ -709,13 +736,11 @@ export default function App() {
                       {visibleSignals.map((signal: Signal) => (
                         <tr
                           key={signal.id}
-                          className={hasSignalChart(signal) ? 'row-clickable' : undefined}
+                          className={`row-clickable ${selectedSignalID === signal.id ? 'row-selected' : ''}`}
                           onClick={() => {
-                            if (!hasSignalChart(signal)) {
-                              return
-                            }
                             if (isMobileViewport()) {
                               setSelectedSignalID(signal.id)
+                              setMobileChartInfoOpen(false)
                               setSignalChartModalOpen(true)
                               return
                             }
@@ -724,9 +749,15 @@ export default function App() {
                         >
                           <td className={hasSignalChart(signal) ? 'chart-link' : undefined}>
                             {signal.id}
-                            {hasSignalChart(signal) ? ' [chart]' : ''}
+                            <i
+                              className={`signal-row-icon fa-solid ${hasSignalChart(signal) ? 'fa-chart-line' : 'fa-circle-info'}`}
+                              aria-label={hasSignalChart(signal) ? 'Chart available' : 'Summary only'}
+                            />
                           </td>
-                          <td>{signal.symbol}</td>
+                          <td>
+                            <span>{signal.symbol}</span>
+                            <span className="mobile-indicator">{signal.indicator}</span>
+                          </td>
                           <td className="hide-mobile">{signal.interval}</td>
                           <td className="hide-mobile">{signal.indicator}</td>
                           <td className={`dir dir--${signal.direction}`}>{signal.direction.toUpperCase()}</td>
@@ -742,15 +773,18 @@ export default function App() {
                   {Math.min(signalsScrollOffset + SIGNAL_VISIBLE_ROWS, signalsQuery.data?.length ?? 0)} of {signalsQuery.data?.length ?? 0}
                 </p>
                 <section className="signal-chart-panel">
-                  <h4>Signal Chart</h4>
+                  <h4>{selectedSignal ? `Signal Chart: ${signalChartSubtitle(selectedSignal)}` : 'Signal Chart'}</h4>
                   {selectedSignalID === null ? (
-                    <p className="footnote">Click a signal row marked with `[chart]` to view its chart.</p>
+                    <p className="footnote">Click a signal row to view chart/details.</p>
                   ) : null}
-                  {selectedSignalID !== null && signalChartQuery.isLoading ? <p className="footnote">Loading chart...</p> : null}
-                  {selectedSignalID !== null && signalChartQuery.isError ? (
+                  {selectedSignalID !== null && selectedSignalHasChart && signalChartQuery.isLoading ? <p className="footnote">Loading chart...</p> : null}
+                  {selectedSignalID !== null && selectedSignalHasChart && signalChartQuery.isError ? (
                     <p className="footnote">Chart unavailable for signal #{selectedSignalID}.</p>
                   ) : null}
-                  {selectedSignalID !== null && selectedSignalChartURL ? (
+                  {selectedSignalID !== null && selectedSignal && (!selectedSignalHasChart || (!signalChartQuery.isLoading && !signalChartQuery.isError)) ? (
+                    <p className="indicator-tldr">TL;DR: {selectedIndicatorTLDR}</p>
+                  ) : null}
+                  {selectedSignalID !== null && selectedSignalHasChart && selectedSignalChartURL ? (
                     <img src={selectedSignalChartURL} alt={`Signal ${selectedSignalID} chart`} className="signal-chart-image" />
                   ) : null}
                 </section>
@@ -901,14 +935,29 @@ export default function App() {
         >
           <article className="signal-chart-modal__content" onClick={(event) => event.stopPropagation()}>
             <header className="signal-chart-modal__header">
-              <h3>Signal Chart</h3>
-              <button type="button" onClick={() => setSignalChartModalOpen(false)}>
-                Close
-              </button>
+              <h3>{selectedSignal ? `Signal Chart: ${signalChartSubtitle(selectedSignal)}` : 'Signal Chart'}</h3>
+              <div className="signal-chart-modal__actions">
+                <button
+                  type="button"
+                  className="signal-info-button"
+                  aria-label="Indicator details"
+                  onClick={() => setMobileChartInfoOpen((prev) => !prev)}
+                >
+                  ⓘ
+                </button>
+                <button type="button" onClick={() => setSignalChartModalOpen(false)}>
+                  Close
+                </button>
+              </div>
             </header>
-            {selectedSignalID !== null && signalChartQuery.isLoading ? <p className="footnote">Loading chart...</p> : null}
-            {selectedSignalID !== null && signalChartQuery.isError ? <p className="footnote">Chart unavailable for signal #{selectedSignalID}.</p> : null}
-            {selectedSignalID !== null && selectedSignalChartURL ? (
+            {selectedSignalID !== null && selectedSignal && (!selectedSignalHasChart || mobileChartInfoOpen) ? (
+              <p className="indicator-tldr">TL;DR: {selectedIndicatorTLDR}</p>
+            ) : null}
+            {selectedSignalID !== null && selectedSignalHasChart && signalChartQuery.isLoading ? <p className="footnote">Loading chart...</p> : null}
+            {selectedSignalID !== null && selectedSignalHasChart && signalChartQuery.isError ? (
+              <p className="footnote">Chart unavailable for signal #{selectedSignalID}.</p>
+            ) : null}
+            {selectedSignalID !== null && selectedSignalHasChart && selectedSignalChartURL ? (
               <img src={selectedSignalChartURL} alt={`Signal ${selectedSignalID} chart`} className="signal-chart-image signal-chart-image--modal" />
             ) : null}
           </article>

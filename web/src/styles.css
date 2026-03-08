@@ -284,8 +284,22 @@ th {
   background: rgba(77, 176, 255, 0.12);
 }
 
+.row-selected td {
+  background: rgba(77, 176, 255, 0.2);
+}
+
 .chart-link {
   color: var(--accent);
+}
+
+.mobile-indicator {
+  display: none;
+}
+
+.signal-row-icon {
+  margin-left: 0.35rem;
+  font-size: 0.75rem;
+  opacity: 0.9;
 }
 
 .pos,
@@ -480,6 +494,18 @@ th {
   background: rgba(4, 12, 19, 0.78);
 }
 
+.indicator-tldr {
+  margin-top: 0.45rem;
+  margin-bottom: 0;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid rgba(141, 165, 182, 0.24);
+  border-radius: 8px;
+  background: rgba(10, 23, 33, 0.78);
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .signal-chart-modal {
   display: none;
 }
@@ -512,6 +538,19 @@ th {
   color: var(--text);
   border-radius: 8px;
   padding: 0.3rem 0.55rem;
+}
+
+.signal-chart-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.signal-info-button {
+  width: 2rem;
+  min-width: 2rem;
+  padding: 0.2rem 0;
+  font-size: 0.95rem;
 }
 
 .signal-chart-image--modal {
@@ -627,6 +666,19 @@ th {
     font-size: 0.8rem;
   }
 
+  .mobile-indicator {
+    display: block;
+    color: var(--muted);
+    font-size: 0.68rem;
+    line-height: 1.2;
+    margin-top: 0.12rem;
+  }
+
+  .signal-row-icon {
+    margin-left: 0.28rem;
+    font-size: 0.7rem;
+  }
+
   .heat-grid {
     grid-template-columns: repeat(3, minmax(80px, 1fr));
     gap: 0.35rem;
@@ -673,6 +725,10 @@ th {
     width: 100%;
     max-height: 92vh;
     border-radius: 12px;
+  }
+
+  .indicator-tldr {
+    font-size: 0.76rem;
   }
 
   .chat-input {
